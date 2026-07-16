@@ -648,6 +648,7 @@ class TestModels(unittest.TestCase):
         }
         hf_norm_key = "model.language_model.layers.0.input_layernorm.weight"
         mlx_norm_key = "language_model.model.layers.0.input_layernorm.weight"
+        hf_conv1d_key = "model.language_model.layers.0.linear_attn.conv1d.weight"
 
         for model_type, hf_mtp_key in (
             ("qwen3_5", "mtp.fc.weights"),
@@ -664,11 +665,14 @@ class TestModels(unittest.TestCase):
 
             base = mx.arange(8, dtype=mx.float32)
 
-            # Simulate convert sanitize on HF-style keys.
+            # Simulate convert sanitize on HF-style keys. The norm shift is only
+            # triggered by an unsanitized (PyTorch-layout) conv1d weight, not by
+            # the presence of MTP weights alone.
             converted = model.sanitize(
                 {
                     hf_norm_key: base,
                     hf_mtp_key: mx.zeros((1,), dtype=mx.float32),
+                    hf_conv1d_key: mx.zeros((4, 1, 3), dtype=mx.float32),
                 }
             )
             self.assertIn(mlx_norm_key, converted)
