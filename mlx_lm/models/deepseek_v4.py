@@ -500,6 +500,10 @@ class CompressedKVCache(KVCache):
     isinstance checks. All state is proxied through self.local (RotatingKVCache).
     """
 
+    # The compressor state has no batched representation. BatchGenerator reads
+    # this capability before it mutates a live scheduler batch.
+    supports_batching = False
+
     def __init__(self, max_size: int = 128):
         # Skip KVCache.__init__ — we proxy everything through self.local
         self.local = RotatingKVCache(max_size=max_size, keep=0)
@@ -557,7 +561,9 @@ class CompressedKVCache(KVCache):
 
     @property
     def meta_state(self):
-        return self.local.meta_state
+        raise NotImplementedError(
+            "DeepSeek-V4 CompressedKVCache prompt-cache serialization is unsupported"
+        )
 
     @meta_state.setter
     def meta_state(self, value):
@@ -579,6 +585,11 @@ class CompressedKVCache(KVCache):
             )
         return self.local.trim(n)
 
+    def to_quantized(self, group_size: int = 64, bits: int = 4):
+        raise NotImplementedError(
+            "DeepSeek-V4 CompressedKVCache KV-cache quantization is unsupported"
+        )
+
     def _configure(self, compressor: 'Compressor'):
         signature = (compressor.ratio, compressor.overlap)
         current = (self._compress_ratio, self._compress_overlap)
@@ -589,73 +600,50 @@ class CompressedKVCache(KVCache):
                 "CompressedKVCache cannot be reused with a different compressor"
             )
 
-    @staticmethod
-    def _validate_batch_compatible(caches):
-        """Reject compressor states that cannot be represented as one batch."""
-        first = caches[0]
-        for cache in caches[1:]:
-            if cache._abs_pos != first._abs_pos:
-                raise ValueError(
-                    "CompressedKVCache batching requires equal absolute positions"
-                )
-            if (
-                cache._compress_ratio != first._compress_ratio
-                or cache._compress_overlap != first._compress_overlap
-            ):
-                raise ValueError(
-                    "CompressedKVCache batching requires matching compressors"
-                )
-            for name in ("_pool", "_state_kv", "_state_score"):
-                left = getattr(first, name)
-                right = getattr(cache, name)
-                if (left is None) != (right is None):
-                    raise ValueError(
-                        f"CompressedKVCache batching requires matching {name} state"
-                    )
-                if left is not None and (
-                    left.shape[1:] != right.shape[1:] or left.dtype != right.dtype
-                ):
-                    raise ValueError(
-                        f"CompressedKVCache batching requires matching {name} shape and dtype"
-                    )
-
     @classmethod
     def merge(cls, caches):
-        """Merge multiple CompressedKVCaches into a single batched cache."""
+        """Clone the unbatched cache used by a singleton scheduler batch."""
         if not caches:
             raise ValueError("CompressedKVCache.merge requires at least one cache")
-        cls._validate_batch_compatible(caches)
-        merged = cls.__new__(cls)
-
-        # Merge local rotating caches (delegates to BatchRotatingKVCache)
-        merged.local = caches[0].local.merge([c.local for c in caches])
-
-        for name in ("_pool", "_state_kv", "_state_score"):
-            values = [getattr(c, name) for c in caches]
-            setattr(
-                merged,
-                name,
-                None if values[0] is None else mx.concatenate(values, axis=0),
+        if len(caches) != 1:
+            raise ValueError(
+                "DeepSeek-V4 CompressedKVCache does not support batching multiple streams"
             )
-        merged._abs_pos = caches[0]._abs_pos
-        merged._compress_ratio = caches[0]._compress_ratio
-        merged._compress_overlap = caches[0]._compress_overlap
+
+        source = caches[0]
+        merged = cls.__new__(cls)
+        merged.local = RotatingKVCache(source.local.max_size, source.local.keep)
+        merged.local.keys = (
+            source.local.keys + 0 if source.local.keys is not None else None
+        )
+        merged.local.values = (
+            source.local.values + 0 if source.local.values is not None else None
+        )
+        merged.local.offset = source.local.offset
+        merged.local._idx = source.local._idx
+        for name in ("_pool", "_state_kv", "_state_score"):
+            value = getattr(source, name)
+            setattr(merged, name, value + 0 if value is not None else None)
+        merged._abs_pos = source._abs_pos
+        merged._compress_ratio = source._compress_ratio
+        merged._compress_overlap = source._compress_overlap
 
         return merged
 
     def filter(self, batch_indices):
-        if hasattr(self.local, 'filter'):
-            self.local.filter(batch_indices)
-        else:
+        if isinstance(self.local, RotatingKVCache):
             indices = (
                 batch_indices.tolist()
-                if isinstance(batch_indices, mx.array)
+                if hasattr(batch_indices, "tolist")
                 else list(batch_indices)
             )
             if indices != [0]:
                 raise ValueError(
-                    "CompressedKVCache cannot filter an unbatched local cache"
+                    "CompressedKVCache only supports singleton filtering"
                 )
+            return
+
+        self.local.filter(batch_indices)
         if self._pool is not None:
             self._pool = self._pool[batch_indices]
         if self._state_kv is not None:
@@ -663,19 +651,9 @@ class CompressedKVCache(KVCache):
             self._state_score = self._state_score[batch_indices]
 
     def extend(self, other):
-        self._validate_batch_compatible([self, other])
-        if hasattr(self.local, 'extend'):
-            self.local.extend(other.local)
-        else:
-            self.local = self.local.merge([self.local, other.local])
-        for name in ("_pool", "_state_kv", "_state_score"):
-            left = getattr(self, name)
-            if left is not None:
-                setattr(
-                    self,
-                    name,
-                    mx.concatenate([left, getattr(other, name)], axis=0),
-                )
+        raise ValueError(
+            "DeepSeek-V4 CompressedKVCache does not support extending another stream"
+        )
 
     def finalize(self):
         if hasattr(self.local, 'finalize'):
@@ -683,20 +661,38 @@ class CompressedKVCache(KVCache):
 
     def extract(self, idx):
         extracted = CompressedKVCache.__new__(CompressedKVCache)
-        if not hasattr(self.local, 'extract'):
-            raise RuntimeError(
-                "CompressedKVCache extraction requires a batched local cache"
+        if isinstance(self.local, RotatingKVCache):
+            if idx != 0:
+                raise ValueError("CompressedKVCache only has singleton index 0")
+            extracted.local = RotatingKVCache(self.local.max_size, self.local.keep)
+            extracted.local.keys = (
+                self.local.keys + 0 if self.local.keys is not None else None
             )
-        extracted.local = self.local.extract(idx)
-        extracted._pool = self._pool[idx:idx+1] if self._pool is not None else None
-        extracted._state_kv = (
-            self._state_kv[idx:idx+1] if self._state_kv is not None else None
-        )
-        extracted._state_score = (
-            self._state_score[idx:idx+1]
-            if self._state_score is not None
-            else None
-        )
+            extracted.local.values = (
+                self.local.values + 0 if self.local.values is not None else None
+            )
+            extracted.local.offset = self.local.offset
+            extracted.local._idx = self.local._idx
+            extracted._pool = self._pool + 0 if self._pool is not None else None
+            extracted._state_kv = (
+                self._state_kv + 0 if self._state_kv is not None else None
+            )
+            extracted._state_score = (
+                self._state_score + 0 if self._state_score is not None else None
+            )
+        else:
+            extracted.local = self.local.extract(idx)
+            extracted._pool = (
+                self._pool[idx : idx + 1] if self._pool is not None else None
+            )
+            extracted._state_kv = (
+                self._state_kv[idx : idx + 1] if self._state_kv is not None else None
+            )
+            extracted._state_score = (
+                self._state_score[idx : idx + 1]
+                if self._state_score is not None
+                else None
+            )
         extracted._abs_pos = self._abs_pos
         extracted._compress_ratio = self._compress_ratio
         extracted._compress_overlap = self._compress_overlap
@@ -1390,6 +1386,8 @@ class DeepseekV4Model(nn.Module, PipelineMixin):
 
 
 class Model(nn.Module):
+    supports_batching = False
+
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.args = args
