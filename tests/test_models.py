@@ -3,6 +3,7 @@ import copy
 import importlib
 import math
 import unittest
+from unittest.mock import patch
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -1469,6 +1470,451 @@ class TestModels(unittest.TestCase):
             axis=-1,
         ).reshape(1, 2, 4, 8)
         self.assertTrue(mx.allclose(y, expected, rtol=1e-5, atol=1e-5))
+
+    def test_deepseek_v4_uses_official_rope_regime_per_layer(self):
+        from mlx_lm.models import deepseek_v4
+
+        scaling = {
+            "type": "yarn",
+            "factor": 16,
+            "original_max_position_embeddings": 65536,
+            "beta_fast": 32,
+            "beta_slow": 1,
+        }
+        args = deepseek_v4.ModelArgs(
+            hidden_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            q_lora_rank=16,
+            o_lora_rank=8,
+            o_groups=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[0, 4],
+            rope_scaling=scaling,
+        )
+        dense = deepseek_v4.V4Attention(args, layer_idx=0)
+        compressed = deepseek_v4.V4Attention(args, layer_idx=1)
+
+        expected_dense = deepseek_v4.DeepseekV4RoPE(4, args.rope_theta)
+        expected_compressed = deepseek_v4.DeepseekV4RoPE(
+            4, args.compress_rope_theta, scaling
+        )
+        self.assertTrue(mx.allclose(dense.rope.inv_freq, expected_dense.inv_freq))
+        self.assertTrue(
+            mx.allclose(compressed.rope.inv_freq, expected_compressed.inv_freq)
+        )
+
+    def test_deepseek_v4_compressed_pool_uses_source_positions_and_causal_mask(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            hidden_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            q_lora_rank=16,
+            o_lora_rank=8,
+            o_groups=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[4],
+            rope_scaling={
+                "type": "yarn",
+                "factor": 16,
+                "original_max_position_embeddings": 65536,
+                "beta_fast": 32,
+                "beta_slow": 1,
+            },
+        )
+        attn = deepseek_v4.V4Attention(args, layer_idx=0)
+        nope = mx.zeros((1, 4, 4), dtype=mx.float32)
+        rope = mx.tile(mx.array([1.0, 0.0, 1.0, 0.0]), (1, 4, 1))
+        pool = mx.concatenate([nope, rope], axis=-1)
+        pool_before = pool + 0
+
+        positioned = attn._rotate_compressed_pool(pool)
+        selected_indices = mx.array([[3, 1]], dtype=mx.int32)
+        gather = mx.broadcast_to(selected_indices[:, :, None], (1, 2, 8))
+        selected = mx.take_along_axis(positioned, gather, axis=1)
+        expected = mx.take(positioned, selected_indices[0], axis=1)
+
+        # The source rows are 3 and 1, so their chunk starts are 12 and 4.
+        # Relabeling them as selected rows 0 and 1 would instead use 0 and 4.
+        relabeled_rope = attn.rope.at_positions(
+            pool[:, :2, 4:], mx.array([0, 4], dtype=mx.int32)
+        )
+        relabeled = mx.concatenate([pool[:, :2, :4], relabeled_rope], axis=-1)
+        mx.eval(pool, pool_before, selected, expected, relabeled)
+        self.assertTrue(mx.array_equal(pool, pool_before).item())
+        self.assertTrue(mx.allclose(selected, expected).item())
+        self.assertFalse(mx.allclose(selected, relabeled).item())
+
+        bool_mask = mx.ones((20, 20), dtype=mx.bool_)
+        comp_bool = attn._compressed_pool_mask(bool_mask, selected_indices, 0)
+        additive_mask = mx.zeros((20, 20), dtype=mx.float32)
+        comp_additive = attn._compressed_pool_mask(
+            additive_mask, selected_indices, 0
+        )
+        mx.eval(comp_bool, comp_additive)
+        self.assertEqual(comp_bool.shape, (1, 20, 2))
+        self.assertFalse(comp_bool[0, 14, 0].item())
+        self.assertTrue(comp_bool[0, 15, 0].item())
+        self.assertFalse(comp_bool[0, 6, 1].item())
+        self.assertTrue(comp_bool[0, 7, 1].item())
+        self.assertTrue(mx.isinf(comp_additive[0, 14, 0]).item())
+        self.assertEqual(comp_additive[0, 15, 0].item(), 0.0)
+
+        # A padded/batched attention mask already has [B, H, Q, K] shape.
+        # Selected compressed rows must retain B and gain only the head axis.
+        batched_indices = mx.array([[3, 1], [2, 0]], dtype=mx.int32)
+        batched_mask = mx.ones((2, 1, 20, 20), dtype=mx.bool_)
+        combined = attn._prepend_compressed_pool_mask(
+            batched_mask, batched_indices, 0
+        )
+        mx.eval(combined)
+        self.assertEqual(combined.shape, (2, 1, 20, 22))
+        self.assertFalse(combined[0, 0, 14, 0].item())
+        self.assertTrue(combined[0, 0, 15, 0].item())
+        self.assertFalse(combined[1, 0, 10, 0].item())
+        self.assertTrue(combined[1, 0, 11, 0].item())
+
+    def test_deepseek_v4_compressed_pool_batch_selection_has_head_axis(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            vocab_size=64,
+            hidden_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            q_lora_rank=16,
+            o_lora_rank=8,
+            o_groups=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[4],
+            index_n_heads=4,
+            index_head_dim=8,
+            index_topk=2,
+            moe_intermediate_size=8,
+            n_routed_experts=2,
+            n_shared_experts=1,
+            num_experts_per_tok=1,
+            hc_mult=2,
+            hc_sinkhorn_iters=2,
+            num_nextn_predict_layers=0,
+        )
+        model = deepseek_v4.Model(args)
+        inputs = mx.array(
+            [list(range(20)), list(range(19, -1, -1))], dtype=mx.int32
+        )
+        output = model(inputs)
+        mx.eval(output)
+        self.assertEqual(output.shape, (2, 20, args.vocab_size))
+
+    def test_deepseek_v4_compressed_pool_vector_offsets(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            hidden_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            q_lora_rank=16,
+            o_lora_rank=8,
+            o_groups=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[4],
+        )
+        attn = deepseek_v4.V4Attention(args, layer_idx=0)
+        offsets = mx.array([6, 10], dtype=mx.int32)
+
+        shared_indices = mx.array([1, 2], dtype=mx.int32)
+        local_bool = mx.ones((2, 3), dtype=mx.bool_)
+        shared = attn._prepend_compressed_pool_mask(
+            local_bool, shared_indices, offsets
+        )
+
+        per_batch_indices = mx.array([[1, 2], [2, 0]], dtype=mx.int32)
+        local_additive = mx.zeros((2, 1, 2, 3), dtype=mx.float32)
+        per_batch = attn._prepend_compressed_pool_mask(
+            local_additive, per_batch_indices, offsets
+        )
+        mx.eval(shared, per_batch)
+
+        self.assertEqual(shared.shape, (2, 1, 2, 5))
+        self.assertFalse(shared[0, 0, 0, 0].item())
+        self.assertTrue(shared[0, 0, 1, 0].item())
+        self.assertTrue(shared[1, 0, 0, 0].item())
+        self.assertFalse(shared[1, 0, 0, 1].item())
+        self.assertTrue(shared[1, 0, 1, 1].item())
+
+        self.assertEqual(per_batch.shape, (2, 1, 2, 5))
+        self.assertTrue(mx.isinf(per_batch[0, 0, 0, 0]).item())
+        self.assertEqual(per_batch[0, 0, 1, 0].item(), 0.0)
+        self.assertTrue(mx.isinf(per_batch[1, 0, 0, 0]).item())
+        self.assertEqual(per_batch[1, 0, 0, 1].item(), 0.0)
+
+    def test_deepseek_v4_two_item_merged_cache_decode(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            vocab_size=64,
+            hidden_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            q_lora_rank=16,
+            o_lora_rank=8,
+            o_groups=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[4],
+            index_n_heads=4,
+            index_head_dim=8,
+            index_topk=2,
+            moe_intermediate_size=8,
+            n_routed_experts=2,
+            n_shared_experts=1,
+            num_experts_per_tok=1,
+            hc_mult=2,
+            hc_sinkhorn_iters=2,
+            num_nextn_predict_layers=0,
+        )
+        model = deepseek_v4.Model(args)
+        first = model.make_cache()
+        second = model.make_cache()
+        model(mx.array([[1, 2, 3, 4, 5]], dtype=mx.int32), cache=first)
+        model(mx.array([[6, 7, 8, 9, 10]], dtype=mx.int32), cache=second)
+        merged = [deepseek_v4.CompressedKVCache.merge([first[0], second[0]])]
+
+        self.assertEqual(merged[0].offset.shape, (2,))
+        output = model(mx.array([[11], [12]], dtype=mx.int32), cache=merged)
+        mx.eval(output)
+        self.assertEqual(output.shape, (2, 1, args.vocab_size))
+
+    def test_deepseek_v4_compressor_prefill_decode_matches_one_shot(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            hidden_size=16,
+            num_attention_heads=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+        )
+        cases = (
+            ("ratio-4 aligned", 4, 8, 12),
+            ("ratio-4 unaligned", 4, 6, 12),
+            ("ratio-128 partial", 128, 5, 128),
+        )
+        for name, ratio, prefill, total in cases:
+            with self.subTest(name=name):
+                compressor = deepseek_v4.Compressor(args, ratio, args.head_dim)
+                width = args.head_dim * (2 if ratio == 4 else 1)
+                compressor.wkv.weight = mx.eye(
+                    width, args.hidden_size, dtype=mx.float32
+                )
+                compressor.wgate.weight = mx.zeros(
+                    (width, args.hidden_size), dtype=mx.float32
+                )
+                compressor.ape = (
+                    mx.arange(ratio * width, dtype=mx.float32)
+                    .reshape(ratio, width)
+                    / (ratio * width)
+                )
+                x = mx.random.uniform(shape=(1, total, args.hidden_size))
+                expected = compressor(x)
+                cache = deepseek_v4.CompressedKVCache(max_size=128)
+                cache.accumulate(x[:, :prefill], compressor)
+                for position in range(prefill, total):
+                    cache.accumulate(x[:, position:position+1], compressor)
+                actual = cache.pool
+                mx.eval(expected, actual)
+                self.assertEqual(actual.shape, expected.shape)
+                self.assertTrue(
+                    mx.allclose(actual, expected, rtol=5e-4, atol=5e-4).item()
+                )
+
+    def test_deepseek_v4_compressor_state_survives_batch_lifecycle(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            hidden_size=16,
+            num_attention_heads=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+        )
+        compressor = deepseek_v4.Compressor(args, 4, args.head_dim)
+        x = mx.random.uniform(shape=(2, 6, args.hidden_size))
+        caches = []
+        for batch in range(2):
+            cache = deepseek_v4.CompressedKVCache(max_size=128)
+            cache.accumulate(x[batch:batch+1], compressor)
+            # Populate the local side so extraction exercises both components.
+            local = mx.zeros((1, 1, 6, args.head_dim))
+            cache.update_and_fetch(local, local)
+            caches.append(cache)
+
+        expected_state = mx.concatenate(
+            [cache._state_kv for cache in caches], axis=0
+        )
+        merged = deepseek_v4.CompressedKVCache.merge(caches)
+        extracted = merged.extract(1)
+        mx.eval(expected_state, extracted._state_kv)
+        self.assertTrue(
+            mx.array_equal(extracted._state_kv, expected_state[1:2]).item()
+        )
+
+        merged.filter(mx.array([1], dtype=mx.int32))
+        mx.eval(merged._state_kv)
+        self.assertTrue(
+            mx.array_equal(merged._state_kv, expected_state[1:2]).item()
+        )
+
+        left, right = caches
+        left.extend(right)
+        mx.eval(left._state_kv)
+        self.assertEqual(left._state_kv.shape[0], 2)
+        self.assertTrue(mx.array_equal(left._state_kv, expected_state).item())
+
+        incompatible = deepseek_v4.CompressedKVCache(max_size=128)
+        incompatible.accumulate(x[:1, :5], compressor)
+        original_local = left.local
+        with self.assertRaisesRegex(ValueError, "equal absolute positions"):
+            left.extend(incompatible)
+        self.assertIs(left.local, original_local)
+
+    def test_deepseek_v4_compressed_cache_trim_fails_closed(self):
+        from mlx_lm.models import cache as cache_utils
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            vocab_size=64,
+            hidden_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            q_lora_rank=16,
+            o_lora_rank=8,
+            o_groups=2,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[4],
+            index_n_heads=4,
+            index_head_dim=8,
+            index_topk=2,
+            moe_intermediate_size=8,
+            n_routed_experts=2,
+            n_shared_experts=1,
+            num_experts_per_tok=1,
+            hc_mult=2,
+            hc_sinkhorn_iters=2,
+            num_nextn_predict_layers=0,
+        )
+        model = deepseek_v4.Model(args)
+        model_cache = model.make_cache()
+        compressed = model_cache[0]
+
+        self.assertIsInstance(compressed, deepseek_v4.CompressedKVCache)
+        self.assertFalse(compressed.is_trimmable())
+        self.assertFalse(cache_utils.can_trim_prompt_cache(model_cache))
+
+        output = model(
+            mx.array([[1, 2, 3, 4]], dtype=mx.int32), cache=model_cache
+        )
+        mx.eval(output)
+        self.assertFalse(cache_utils.can_trim_prompt_cache(model_cache))
+        with self.assertRaisesRegex(RuntimeError, "cannot be trimmed"):
+            compressed.trim(1)
+
+    def test_deepseek_v4_0731_dspark_loads_target_without_conventional_mtp(self):
+        from mlx_lm.models import deepseek_v4
+
+        args = deepseek_v4.ModelArgs(
+            model_type="deepseek_v4",
+            vocab_size=32,
+            hidden_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            q_lora_rank=8,
+            o_lora_rank=4,
+            o_groups=1,
+            head_dim=8,
+            qk_rope_head_dim=4,
+            compress_ratios=[0],
+            moe_intermediate_size=8,
+            n_routed_experts=2,
+            n_shared_experts=1,
+            num_experts_per_tok=1,
+            hc_mult=2,
+            hc_sinkhorn_iters=2,
+            num_nextn_predict_layers=1,
+            dspark_block_size=5,
+            dspark_target_layer_ids=[0],
+            dspark_noise_token_id=128799,
+            dspark_markov_rank=256,
+            n_mtp_layers=3,
+        )
+        model = deepseek_v4.Model(args)
+        self.assertFalse(hasattr(model, "mtp"))
+        self.assertIsNone(model.make_mtp_cache())
+        with self.assertRaisesRegex(RuntimeError, "DSpark speculation"):
+            model.mtp_forward(mx.zeros((1, 1, 2, args.hidden_size)), mx.array([[1]]))
+
+        weights = {
+            "mtp.0.main_proj.weight": mx.zeros((1, 1)),
+            "mtp.1.attn.wq_a.weight": mx.zeros((1, 1)),
+            "mtp.2.confidence_head.proj.weight": mx.zeros((1, 1)),
+            "embed.weight": mx.zeros((args.vocab_size, args.hidden_size)),
+        }
+        with self.assertLogs("mlx_lm.models.deepseek_v4", level="WARNING") as logs:
+            sanitized = model.sanitize(weights)
+        self.assertTrue(any("DSpark is not implemented" in line for line in logs.output))
+        self.assertTrue(all(not key.startswith("mtp.") for key in sanitized))
+        self.assertIn("model.embed_tokens.weight", sanitized)
+
+        output = model(mx.array([[1]], dtype=mx.int32))
+        mx.eval(output)
+        self.assertEqual(output.shape, (1, 1, args.vocab_size))
+
+    def test_hc_sinkhorn_metal_is_opt_in(self):
+        from mlx_lm.models import sinkhorn
+
+        original = sinkhorn._hc_split_sinkhorn_fused_kernel
+        calls = []
+
+        def fused_kernel(**kwargs):
+            calls.append(kwargs)
+            return "pre", "post", "comb"
+
+        mixes = mx.zeros((1, 24), dtype=mx.float32)
+        scale = mx.ones((3,), dtype=mx.float32)
+        base = mx.zeros((24,), dtype=mx.float32)
+        try:
+            sinkhorn._hc_split_sinkhorn_fused_kernel = None
+            with patch.object(
+                sinkhorn,
+                "_make_hc_split_sinkhorn_fused_kernel",
+                return_value=fused_kernel,
+            ) as factory, patch.object(
+                sinkhorn.mx.metal, "is_available", return_value=True
+            ):
+                with patch.dict(
+                    "os.environ", {"MLX_LM_ENABLE_HC_SINKHORN_METAL": "0"}
+                ):
+                    sinkhorn.hc_split_sinkhorn(mixes, scale, base)
+                    factory.assert_not_called()
+
+                with patch.dict(
+                    "os.environ", {"MLX_LM_ENABLE_HC_SINKHORN_METAL": "1"}
+                ):
+                    result = sinkhorn.hc_split_sinkhorn(mixes, scale, base)
+                    self.assertEqual(result, ("pre", "post", "comb"))
+                    self.assertEqual(len(calls), 1)
+                    factory.assert_called_once_with()
+
+                    sinkhorn.hc_split_sinkhorn(mixes, scale, base)
+                    self.assertEqual(len(calls), 2)
+                    factory.assert_called_once_with()
+        finally:
+            sinkhorn._hc_split_sinkhorn_fused_kernel = original
 
     def test_deepseek_v4(self):
         from mlx_lm.models import deepseek_v4
