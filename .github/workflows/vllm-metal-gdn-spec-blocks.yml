@@ -140,6 +140,17 @@ jobs:
             'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl' \
             2>&1 | tee ../vllm-metal-gdn-spec-blocks-vllm-install.log
 
+      - name: Run tensor bridge tests in a fresh MPS process
+        shell: bash
+        working-directory: work/vllm-metal
+        env:
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
+        run: |
+          set -o pipefail
+          source .venv-vllm-metal/bin/activate
+          pytest -q tests/test_tensor_bridge.py \
+            2>&1 | tee ../vllm-metal-gdn-spec-blocks-tensor-bridge.log
+
       - name: Run focused state-transaction tests
         shell: bash
         working-directory: work/vllm-metal
@@ -165,6 +176,7 @@ jobs:
           set -o pipefail
           source .venv-vllm-metal/bin/activate
           pytest -q -m 'not slow' tests/ \
+            --ignore=tests/test_tensor_bridge.py \
             2>&1 | tee ../vllm-metal-gdn-spec-blocks-full-tests.log
 
       - name: Upload review patch and diagnostics
@@ -177,6 +189,7 @@ jobs:
             work/vllm-metal-gdn-spec-blocks-apply.log
             work/vllm-metal-gdn-spec-blocks-lint.log
             work/vllm-metal-gdn-spec-blocks-vllm-install.log
+            work/vllm-metal-gdn-spec-blocks-tensor-bridge.log
             work/vllm-metal-gdn-spec-blocks-tests.log
             work/vllm-metal-gdn-spec-blocks-full-tests.log
             work/vllm-metal-gdn-spec-blocks-apply.py
