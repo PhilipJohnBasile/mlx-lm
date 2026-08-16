@@ -52,7 +52,22 @@ jobs:
         working-directory: vllm-metal
         run: |
           source .venv/bin/activate
-          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain.py
+          set +e
+          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain.py \
+            > ../lab/downstream/vllm-metal-610/phase1-apply.log 2>&1
+          status=$?
+          set -e
+          cat ../lab/downstream/vllm-metal-610/phase1-apply.log
+          if [ "$status" -ne 0 ]; then
+            cd ../lab
+            git config user.name 'Philip John Basile'
+            git config user.email 'PBasile@Basilecom.com'
+            git add downstream/vllm-metal-610/phase1-apply.log
+            git commit -m 'debug: preserve vllm-metal phase-1 apply failure' || true
+            git push origin HEAD:lab/vllm-metal-610-spider-web
+            exit "$status"
+          fi
+          rm ../lab/downstream/vllm-metal-610/phase1-apply.log
           git diff --check
 
       - name: Format and lint changed sources
