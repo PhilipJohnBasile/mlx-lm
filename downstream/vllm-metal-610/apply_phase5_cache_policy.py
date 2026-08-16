@@ -132,17 +132,21 @@ replace_once(
                     \"native Qwen MTP requires its KV page size to match the \"
                     \"target full-attention page size\"
                 )
-            # HiddenStateCacheSpec is vLLM's cache-only grouping path. It keeps
-            # the one-layer MTP cache distinct without reducing every hybrid
-            # target/GDN group to size one.
-            for layer_idx in range(num_mtp_layers):
-                specs[f\"mtp.layers.{layer_idx}.self_attn\"] = mtp_spec
+            # HiddenStateCacheSpec is vLLM's cache-only grouping path. Put the
+            # custom distinct subtype first so the early uniformity probe sees
+            # its own registered base, fails closed, and reaches cache-only
+            # extraction without reducing every target/GDN group to size one.
+            mtp_specs = {
+                f\"mtp.layers.{layer_idx}.self_attn\": mtp_spec
+                for layer_idx in range(num_mtp_layers)
+            }
+            specs = {**mtp_specs, **specs}
 
         return specs
 
     def _build_mha_attention_spec(
 """,
-    "append distinct MTP cache specs",
+    "prepend distinct MTP cache specs",
 )
 replace_once(
     path,
