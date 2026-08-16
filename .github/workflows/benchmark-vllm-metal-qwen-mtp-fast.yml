@@ -1,0 +1,225 @@
+name: Benchmark vLLM Metal Qwen MTP serving (bounded)
+
+on:
+  push:
+    branches:
+      - stack/vllm-metal-610-merge-ready
+    paths:
+      - .github/workflows/benchmark-vllm-metal-qwen-mtp-fast.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vllm-metal-qwen-mtp-serving-benchmark
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      MODEL_SOURCE: Qwen/Qwen3.5-2B
+      MODEL_DIR: /tmp/qwen35-2b-mtp-4bit
+      VLLM_METAL_USE_PAGED_ATTENTION: "1"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout hardened MLX-LM MTP branch
+        uses: actions/checkout@v5
+        with:
+          ref: stack/vllm-metal-610-merge-ready
+          path: mlx-lm
+          fetch-depth: 0
+
+      - name: Checkout consolidated vLLM Metal feature
+        uses: actions/checkout@v5
+        with:
+          repository: PhilipJohnBasile/vllm-metal
+          ref: pr/610-05-paged-qwen-mtp-prefix
+          path: vllm-metal
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install and build serving environment
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip uv
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install \
+            'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl'
+          VLLM_METAL_BUILD_FROM_SOURCE=1 python -m pip install -e '.[dev]'
+          # Benchmark the exact hardened implementation proposed upstream without
+          # changing the downstream dependency pin before ml-explore/mlx-lm#1740 merges.
+          python -m pip install --no-deps -e ../mlx-lm
+          source scripts/lib.sh
+          ensure_metal_toolchain
+          build_native_artifacts
+          python - <<'PY'
+          import platform
+          import mlx.core as mx
+          import torch
+          assert platform.machine() == 'arm64'
+          assert torch.backends.mps.is_available()
+          print('machine=', platform.machine())
+          print('mlx_device=', mx.default_device())
+          print('mps_available=', torch.backends.mps.is_available())
+          PY
+
+      - name: Convert Qwen3.5-2B and verify native MTP weights
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          set -euxo pipefail
+          source .venv/bin/activate
+          rm -rf "$MODEL_DIR"
+          python -m mlx_lm.convert \
+            --hf-path "$MODEL_SOURCE" \
+            --mlx-path "$MODEL_DIR" \
+            -q --q-bits 4 --q-group-size 64
+          python - <<'PY'
+          import json, os
+          from mlx_lm import load
+          path = os.environ['MODEL_DIR']
+          model, _ = load(path)
+          config = json.load(open(os.path.join(path, 'config.json')))
+          text = config.get('text_config', config)
+          assert bool(getattr(model, 'supports_mtp', False)), 'MTP tensors missing after conversion'
+          assert int(text.get('mtp_num_hidden_layers', 0)) == 1
+          print('verified native MTP checkpoint:', path)
+          PY
+          rm -rf "$HOME/.cache/huggingface/hub/models--Qwen--Qwen3.5-2B" || true
+
+      - name: Baseline — prefix caching, MTP off
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          set -euxo pipefail
+          source .venv/bin/activate
+          rm -f /tmp/vllm-baseline.log /tmp/baseline.json /tmp/baseline.pid
+          python - <<'PY'
+          import os, subprocess
+          log = open('/tmp/vllm-baseline.log', 'wb')
+          cmd = [
+              'vllm', 'serve', os.environ['MODEL_DIR'],
+              '--host', '127.0.0.1', '--port', '8000',
+              '--enable-prefix-caching', '--max-model-len', '4096',
+          ]
+          p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+          open('/tmp/baseline.pid', 'w').write(str(p.pid))
+          print('baseline server pid', p.pid)
+          PY
+          pid="$(cat /tmp/baseline.pid)"
+          cleanup() {
+            /bin/kill -TERM -"$pid" 2>/dev/null || true
+            for i in $(seq 1 8); do
+              if ! /bin/kill -0 "$pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            /bin/kill -KILL -"$pid" 2>/dev/null || true
+          }
+          trap 'cleanup; tail -160 /tmp/vllm-baseline.log || true' EXIT
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then break; fi
+            if ! /bin/kill -0 "$pid" 2>/dev/null; then cat /tmp/vllm-baseline.log; exit 1; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/health >/dev/null
+          python ../mlx-lm/downstream/vllm-metal-610/bench_qwen_mtp_serving.py \
+            --label baseline --model "$MODEL_DIR" --base-url http://127.0.0.1:8000 \
+            --requests 6 --max-tokens 64 --shared-prefix-tokens 512 \
+            --out /tmp/baseline.json
+          cleanup
+          trap - EXIT
+          cat /tmp/baseline.json
+          tail -100 /tmp/vllm-baseline.log
+
+      - name: Feature — prefix caching plus one-token native Qwen MTP
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          set -euxo pipefail
+          source .venv/bin/activate
+          rm -f /tmp/vllm-mtp.log /tmp/mtp.json /tmp/mtp.pid
+          python - <<'PY'
+          import os, subprocess
+          log = open('/tmp/vllm-mtp.log', 'wb')
+          cmd = [
+              'vllm', 'serve', os.environ['MODEL_DIR'],
+              '--host', '127.0.0.1', '--port', '8001',
+              '--enable-prefix-caching', '--max-model-len', '4096',
+              '--speculative-config', '{"method":"mtp","num_speculative_tokens":1}',
+          ]
+          p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+          open('/tmp/mtp.pid', 'w').write(str(p.pid))
+          print('MTP server pid', p.pid)
+          PY
+          pid="$(cat /tmp/mtp.pid)"
+          cleanup() {
+            /bin/kill -TERM -"$pid" 2>/dev/null || true
+            for i in $(seq 1 8); do
+              if ! /bin/kill -0 "$pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            /bin/kill -KILL -"$pid" 2>/dev/null || true
+          }
+          trap 'cleanup; tail -220 /tmp/vllm-mtp.log || true' EXIT
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8001/health >/dev/null; then break; fi
+            if ! /bin/kill -0 "$pid" 2>/dev/null; then cat /tmp/vllm-mtp.log; exit 1; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8001/health >/dev/null
+          python ../mlx-lm/downstream/vllm-metal-610/bench_qwen_mtp_serving.py \
+            --label mtp --model "$MODEL_DIR" --base-url http://127.0.0.1:8001 \
+            --requests 6 --max-tokens 64 --shared-prefix-tokens 512 \
+            --out /tmp/mtp.json
+          cleanup
+          trap - EXIT
+          cat /tmp/mtp.json
+          tail -140 /tmp/vllm-mtp.log
+
+      - name: Summarize A/B results
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          paths = ['/tmp/baseline.json', '/tmp/mtp.json']
+          data = [json.load(open(path)) for path in paths if os.path.exists(path)]
+          out = {
+              'hardware': 'GitHub macos-15 arm64 Apple Silicon',
+              'vllm_metal_ref': 'PhilipJohnBasile/vllm-metal@pr/610-05-paged-qwen-mtp-prefix',
+              'mlx_lm_ref': 'PhilipJohnBasile/mlx-lm@stack/vllm-metal-610-merge-ready',
+              'results': data,
+          }
+          if len(data) == 2:
+              baseline, mtp = data
+              out['speedup_output'] = mtp['output_tok_s'] / baseline['output_tok_s']
+              out['speedup_end_to_end'] = mtp['end_to_end_tok_s'] / baseline['end_to_end_tok_s']
+              out['ttft_ratio'] = mtp['mean_ttft_ms'] / baseline['mean_ttft_ms']
+          with open('/tmp/serving-benchmark.json', 'w') as handle:
+              json.dump(out, handle, indent=2)
+          print('FINAL_BENCHMARK=' + json.dumps(out, sort_keys=True))
+          print(json.dumps(out, indent=2))
+          PY
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen35-mtp-serving-benchmark-bounded
+          path: |
+            /tmp/serving-benchmark.json
+            /tmp/baseline.json
+            /tmp/mtp.json
+            /tmp/vllm-baseline.log
+            /tmp/vllm-mtp.log
+          if-no-files-found: warn
