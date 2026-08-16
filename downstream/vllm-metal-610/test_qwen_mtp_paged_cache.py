@@ -8,8 +8,9 @@ import numpy as np
 import pytest
 import torch
 from vllm.sampling_params import SamplingParams
+from vllm.v1.core.kv_cache_utils import get_kv_cache_groups
 from vllm.v1.core.single_type_kv_cache_manager import FullAttentionManager
-from vllm.v1.kv_cache_interface import FullAttentionSpec
+from vllm.v1.kv_cache_interface import FullAttentionSpec, HiddenStateCacheSpec
 from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
 
 from vllm_metal.attention.runtime.hybrid import HybridPagedAttentionRuntime
@@ -22,30 +23,69 @@ from vllm_metal.v1.spec_decode import SpeculativeDecodeController
 
 class TestQwenMTPAttentionSpec:
     def test_reports_dense_key_value_page_bytes(self) -> None:
+        # Four logical latent heads represent K+V for two physical MTP KV heads.
         spec = QwenMTPAttentionSpec(
             block_size=4,
-            num_kv_heads=2,
+            num_kv_heads=4,
             head_size=8,
             dtype=torch.float16,
         )
+        assert isinstance(spec, HiddenStateCacheSpec)
         assert spec.page_size_bytes == 4 * 2 * (8 + 8) * 2
         assert KVCacheSpecRegistry.get_manager_class(spec) is FullAttentionManager
+        assert KVCacheSpecRegistry.get_uniform_type_base_spec(spec) is type(spec)
 
-    def test_does_not_merge_into_target_full_attention_group(self) -> None:
+    def test_cache_only_group_does_not_fragment_target_groups(self) -> None:
+        mtp = QwenMTPAttentionSpec(
+            block_size=4,
+            num_kv_heads=4,
+            head_size=8,
+            dtype=torch.float16,
+        )
         target = FullAttentionSpec(
             block_size=4,
             num_kv_heads=2,
             head_size=8,
             dtype=torch.float16,
         )
-        mtp = QwenMTPAttentionSpec(
-            block_size=4,
-            num_kv_heads=2,
-            head_size=8,
-            dtype=torch.float16,
+        # Production inserts the distinct cache-only MTP spec first. That makes
+        # vLLM's early uniformity probe use the custom registered base, then its
+        # cache-only extraction path removes MTP before target group sizing.
+        groups = get_kv_cache_groups(
+            SimpleNamespace(
+                scheduler_config=SimpleNamespace(
+                    disable_hybrid_kv_cache_manager=False
+                ),
+                speculative_config=SimpleNamespace(use_eagle=lambda: True),
+            ),
+            {
+                "mtp.layers.0.self_attn": mtp,
+                "layers.0.self_attn": target,
+                "layers.1.self_attn": target,
+                "layers.2.self_attn": target,
+                "layers.3.self_attn": target,
+            },
         )
-        with pytest.raises(AssertionError):
-            FullAttentionSpec.merge([target, mtp])
+
+        assert len(groups) == 2
+        target_group = next(
+            group
+            for group in groups
+            if "layers.0.self_attn" in group.layer_names
+        )
+        mtp_group = next(
+            group
+            for group in groups
+            if "mtp.layers.0.self_attn" in group.layer_names
+        )
+        assert target_group.layer_names == [
+            "layers.0.self_attn",
+            "layers.1.self_attn",
+            "layers.2.self_attn",
+            "layers.3.self_attn",
+        ]
+        assert mtp_group.layer_names == ["mtp.layers.0.self_attn"]
+        assert target_group.kv_cache_spec.page_size_bytes == mtp_group.kv_cache_spec.page_size_bytes
 
 
 class TestQwenMTPBoundaryHiddenCache:
