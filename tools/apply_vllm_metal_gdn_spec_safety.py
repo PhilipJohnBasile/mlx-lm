@@ -103,16 +103,17 @@ replace_once(
 """,
     "restore hybrid policy parameter",
 )
-replace_once(
-    "vllm_metal/v1/spec_decode.py",
-    """                "KV slots."
-            )
-
-        decode_req_ids = {req_id for req_id, _ in decode_reqs}
-""",
-    """                "KV slots."
-            )
-        if (
+spec_rel = "vllm_metal/v1/spec_decode.py"
+spec_text = read(spec_rel)
+method_start = spec_text.index("    def validate_supported(")
+method_end = spec_text.index("\n    def ", method_start + 5)
+method = spec_text[method_start:method_end]
+marker = "        decode_req_ids = {req_id for req_id, _ in decode_reqs}\n"
+if method.count(marker) != 1:
+    raise RuntimeError(
+        "fail closed without align-mode transactions: expected one policy marker"
+    )
+insert = """        if (
             (active_spec_tokens or has_invalid_spec_tokens)
             and is_hybrid
             and not hybrid_gdn_transactions_enabled
@@ -123,10 +124,9 @@ replace_once(
                 "caching with mamba_cache_mode='align' or disable speculation."
             )
 
-        decode_req_ids = {req_id for req_id, _ in decode_reqs}
-""",
-    "fail closed without align-mode transactions",
-)
+"""
+method = method.replace(marker, insert + marker, 1)
+write(spec_rel, spec_text[:method_start] + method + spec_text[method_end:])
 
 # Feed the installed runtime capability into the preflight policy.
 replace_once(
