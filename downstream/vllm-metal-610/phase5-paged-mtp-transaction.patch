@@ -1,0 +1,2618 @@
+diff --git a/tests/attention/test_align_gdn_state_manager.py b/tests/attention/test_align_gdn_state_manager.py
+index f086c92..12bddf5 100644
+--- a/tests/attention/test_align_gdn_state_manager.py
++++ b/tests/attention/test_align_gdn_state_manager.py
+@@ -3,10 +3,14 @@ from __future__ import annotations
+ 
+ import mlx.core as mx
+ import numpy as np
++import torch
+ 
+ from vllm_metal.attention.caches.gdn_cache import GDNPagedStateCache
+ from vllm_metal.attention.context import PagedAttentionContext
+-from vllm_metal.attention.runtime.hybrid import HybridPagedAttentionRuntime
++from vllm_metal.attention.runtime.hybrid import (
++    HybridPagedAttentionRuntime,
++    _build_linear_layer_spec,
++)
+ from vllm_metal.attention.state import AlignGDNStateManager
+ 
+ BLOCK = 4
+@@ -51,7 +55,17 @@ def _slab(cache: GDNPagedStateCache, layer: int, slab: int) -> tuple:
+ 
+ class TestAlignGDNStateManager:
+     def _populate(self, manager, req_ids, tables, positions):
+-        ctx = PagedAttentionContext(slot_mapping=[])
++        # The production batch packs decode requests first. Mirror that
++        # ordering so multi-token decode can be distinguished from chunked
++        # prefill without changing the ordinary prefill path.
++        num_decode_requests = 0
++        for num_computed, _ in positions:
++            if num_computed <= 0:
++                break
++            num_decode_requests += 1
++        ctx = PagedAttentionContext(
++            slot_mapping=[], num_decode_requests=num_decode_requests
++        )
+         manager.populate_step_context(
+             req_ids=req_ids,
+             ctx=ctx,
+@@ -120,6 +134,96 @@ class TestAlignGDNStateManager:
+         conv, _ = _slab(cache, 0, 3)  # group 1's checkpoint intact in the pool
+         np.testing.assert_array_equal(conv, 8.0)
+ 
++    def test_speculative_window_plans_one_state_per_input_token(self) -> None:
++        cache = _make_cache(num_blocks=12)
++        manager = AlignGDNStateManager(cache, BLOCK, num_speculative_blocks=2)
++        _fill_slab(cache, 0, 3, 5.0)
++        _fill_slab(cache, 1, 3, 5.0)
++
++        # Five tokens are already computed, so block-table column 1 is the
++        # current recurrent state. The two following columns are the scheduler's
++        # speculative Mamba blocks for a [confirmed, draft1, draft2] window.
++        ctx = self._populate(
++            manager,
++            ["req-A"],
++            [[[2, 3, 6, 7]]],
++            [(5, 3)],
++        )
++
++        assert ctx.gdn_group_slot_mappings == ([7],)
++        assert ctx.gdn_group_state_chains == ([[3, 3, 6, 7]],)
++
++    def test_speculative_commit_promotes_selected_checkpoint(self) -> None:
++        cache = _make_cache(num_blocks=12)
++        manager = AlignGDNStateManager(cache, BLOCK, num_speculative_blocks=2)
++        tables = [[[2, 3, 6, 7]]]
++        positions = [(5, 3)]
++        self._populate(manager, ["req-A"], tables, positions)
++
++        # Simulate the state-producing GDN path: slot 3 after confirmed token,
++        # slot 6 after draft one, slot 7 after draft two.
++        for layer in (0, 1):
++            _fill_slab(cache, layer, 3, 10.0)
++            _fill_slab(cache, layer, 6, 20.0)
++            _fill_slab(cache, layer, 7, 30.0)
++
++        manager.commit_speculative_state(
++            req_ids=["req-A"],
++            state_block_ids=tables,
++            step_positions=positions,
++            num_sampled_tokens=[2],
++        )
++
++        # Two emitted tokens means one draft accepted. The selected snapshot is
++        # slot 6, but the committed sequence is still in block-table column 1,
++        # so it is promoted back to scheduler block 3.
++        for layer in (0, 1):
++            conv, rec = _slab(cache, layer, 3)
++            np.testing.assert_array_equal(conv, 20.0)
++            np.testing.assert_array_equal(rec, 20.0)
++
++    def test_speculative_commit_crosses_block_boundary(self) -> None:
++        cache = _make_cache(num_blocks=12)
++        manager = AlignGDNStateManager(cache, BLOCK, num_speculative_blocks=2)
++        tables = [[[2, 3, 6, 7]]]
++        positions = [(7, 3)]
++        self._populate(manager, ["req-A"], tables, positions)
++
++        for layer in (0, 1):
++            _fill_slab(cache, layer, 3, 10.0)
++            _fill_slab(cache, layer, 6, 20.0)
++            _fill_slab(cache, layer, 7, 30.0)
++
++        manager.commit_speculative_state(
++            req_ids=["req-A"],
++            state_block_ids=tables,
++            step_positions=positions,
++            num_sampled_tokens=[3],
++        )
++
++        # Three emitted tokens selects state slot 7. The accepted sequence has
++        # crossed into positional block-table column 2, so slot 7 is promoted
++        # into scheduler block 6.
++        for layer in (0, 1):
++            conv, rec = _slab(cache, layer, 6)
++            np.testing.assert_array_equal(conv, 30.0)
++            np.testing.assert_array_equal(rec, 30.0)
++
++    def test_linear_spec_reports_scheduler_speculative_blocks(self) -> None:
++        spec = _build_linear_layer_spec(
++            conv_kernel_dim=2,
++            conv_dim=4,
++            num_v_heads=1,
++            value_head_dim=4,
++            key_head_dim=32,
++            torch_dtype=torch.float16,
++            mamba_block_size=BLOCK,
++            mamba_cache_mode="align",
++            num_speculative_blocks=3,
++        )
++        assert spec.num_speculative_blocks == 3
++        assert spec.max_num_blocks_per_req is not None
++
+     def test_pool_materializes_lazily_by_high_water_block_id(self) -> None:
+         cache = _make_cache(num_blocks=8, initial_blocks=2)
+         manager = AlignGDNStateManager(cache, BLOCK)
+diff --git a/tests/test_gdn_lazy_wrapper.py b/tests/test_gdn_lazy_wrapper.py
+index 4d3292c..5e31934 100644
+--- a/tests/test_gdn_lazy_wrapper.py
++++ b/tests/test_gdn_lazy_wrapper.py
+@@ -110,6 +110,55 @@ def _make_state_cache(
+     )
+ 
+ 
++class TestGDNSpeculativeStateChains:
++    def test_full_wrapper_writes_conv_and_recurrent_snapshot_per_token(self) -> None:
++        inner = _TinyGDNInner()
++        cache = _make_state_cache(
++            max_seqs=4,
++            conv_kernel_dim=inner.conv_kernel_size,
++            conv_dim=inner.conv_dim,
++            num_v_heads=inner.num_v_heads,
++            value_head_dim=inner.head_v_dim,
++            key_head_dim=inner.head_k_dim,
++        )
++        wrapper = GDNPagedAttentionWrapper(
++            inner, layer_idx=0, cache_idx=0, state_cache=cache
++        )
++        context = PagedAttentionContext(
++            slot_mapping=[],
++            cu_seqlens=[0, 3],
++            num_decode_requests=1,
++            gdn_group_slot_mappings=([2],),
++            gdn_group_state_chains=([[0, 0, 1, 2]],),
++        )
++        tokens = mx.stack(
++            [
++                mx.full((inner.conv_dim,), 0.01, dtype=mx.float32),
++                mx.full((inner.conv_dim,), 0.02, dtype=mx.float32),
++                mx.full((inner.conv_dim,), 0.03, dtype=mx.float32),
++            ],
++            axis=0,
++        )[None]
++
++        set_context(context)
++        try:
++            output = wrapper(tokens)
++        finally:
++            clear_context()
++        mx.eval(output, *cache.updated_state_arrays())
++
++        assert output.shape == (1, 3, inner.head_v_dim)
++        conv = np.array(cache.conv_states[0])
++        np.testing.assert_allclose(conv[0], 0.01, atol=1e-6)
++        np.testing.assert_allclose(conv[1], 0.02, atol=1e-6)
++        np.testing.assert_allclose(conv[2], 0.03, atol=1e-6)
++
++        recurrent = np.array(cache.recurrent_states[0])
++        assert np.any(recurrent[0] != 0)
++        assert np.any(recurrent[1] != recurrent[0])
++        assert np.any(recurrent[2] != recurrent[1])
++
++
+ class TestGDNPagedAttentionWrapperLazyKernels:
+     def test_mixed_batch_with_prefill_tries_recurrent_lazy_path(
+         self, monkeypatch: pytest.MonkeyPatch
+diff --git a/tests/test_qwen_mtp_paged_cache.py b/tests/test_qwen_mtp_paged_cache.py
+new file mode 100644
+index 0000000..4c23ae1
+--- /dev/null
++++ b/tests/test_qwen_mtp_paged_cache.py
+@@ -0,0 +1,238 @@
++# SPDX-License-Identifier: Apache-2.0
++from __future__ import annotations
++
++from types import SimpleNamespace
++
++import mlx.core as mx
++import numpy as np
++import pytest
++import torch
++from vllm.sampling_params import SamplingParams
++from vllm.v1.core.kv_cache_utils import get_kv_cache_groups
++from vllm.v1.core.single_type_kv_cache_manager import FullAttentionManager
++from vllm.v1.kv_cache_interface import FullAttentionSpec, HiddenStateCacheSpec
++from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
++
++from vllm_metal.attention.runtime.hybrid import HybridPagedAttentionRuntime
++from vllm_metal.v1.qwen_mtp_paged import (
++    QwenMTPAttentionSpec,
++    QwenMTPBoundaryHiddenCache,
++)
++from vllm_metal.v1.spec_decode import SpeculativeDecodeController
++
++
++class TestQwenMTPAttentionSpec:
++    def test_reports_dense_key_value_page_bytes(self) -> None:
++        # Four logical latent heads represent K+V for two physical MTP KV heads.
++        spec = QwenMTPAttentionSpec(
++            block_size=4,
++            num_kv_heads=4,
++            head_size=8,
++            dtype=torch.float16,
++        )
++        assert isinstance(spec, HiddenStateCacheSpec)
++        assert spec.page_size_bytes == 4 * 2 * (8 + 8) * 2
++        assert KVCacheSpecRegistry.get_manager_class(spec) is FullAttentionManager
++        assert KVCacheSpecRegistry.get_uniform_type_base_spec(spec) is type(spec)
++
++    def test_cache_only_group_does_not_fragment_target_groups(self) -> None:
++        mtp = QwenMTPAttentionSpec(
++            block_size=4,
++            num_kv_heads=4,
++            head_size=8,
++            dtype=torch.float16,
++        )
++        target = FullAttentionSpec(
++            block_size=4,
++            num_kv_heads=2,
++            head_size=8,
++            dtype=torch.float16,
++        )
++        # Production inserts the distinct cache-only MTP spec first. That makes
++        # vLLM's early uniformity probe use the custom registered base, then its
++        # cache-only extraction path removes MTP before target group sizing.
++        groups = get_kv_cache_groups(
++            SimpleNamespace(
++                scheduler_config=SimpleNamespace(disable_hybrid_kv_cache_manager=False),
++                speculative_config=SimpleNamespace(use_eagle=lambda: True),
++            ),
++            {
++                "mtp.layers.0.self_attn": mtp,
++                "layers.0.self_attn": target,
++                "layers.1.self_attn": target,
++                "layers.2.self_attn": target,
++                "layers.3.self_attn": target,
++            },
++        )
++
++        assert len(groups) == 2
++        target_group = next(
++            group for group in groups if "layers.0.self_attn" in group.layer_names
++        )
++        mtp_group = next(
++            group for group in groups if "mtp.layers.0.self_attn" in group.layer_names
++        )
++        assert target_group.layer_names == [
++            "layers.0.self_attn",
++            "layers.1.self_attn",
++            "layers.2.self_attn",
++            "layers.3.self_attn",
++        ]
++        assert mtp_group.layer_names == ["mtp.layers.0.self_attn"]
++        assert (
++            target_group.kv_cache_spec.page_size_bytes
++            == mtp_group.kv_cache_spec.page_size_bytes
++        )
++
++
++class TestQwenMTPBoundaryHiddenCache:
++    def test_store_read_copy_and_reuse_follow_target_blocks(self) -> None:
++        cache = QwenMTPBoundaryHiddenCache(
++            num_blocks=8,
++            block_size=4,
++            hidden_size=3,
++            dtype=mx.float32,
++        )
++        assert cache.bytes_per_block == 3 * mx.float32.size + mx.uint8.size
++        hidden = mx.array(
++            [
++                [10.0, 11.0, 12.0],
++                [20.0, 21.0, 22.0],
++                [30.0, 31.0, 32.0],
++                [40.0, 41.0, 42.0],
++            ],
++            dtype=mx.float32,
++        )
++        # Scheduler slots 8..11 complete block 2. Only its final hidden state
++        # becomes a durable warm-prefix checkpoint.
++        cache.store([8, 9, 10, 11], hidden)
++        mx.eval(cache.cache, cache.valid)
++
++        value = cache.read([0, 1, 2], token_position=11)
++        np.testing.assert_array_equal(np.array(value), [[40.0, 41.0, 42.0]])
++
++        cache.copy_blocks([(2, 5)])
++        mx.eval(cache.cache, cache.valid)
++        copied = cache.read([0, 1, 5], token_position=11)
++        np.testing.assert_array_equal(np.array(copied), [[40.0, 41.0, 42.0]])
++
++        # Beginning a new lifetime for physical block 5 invalidates the old
++        # occupant's checkpoint until that new block is complete.
++        cache.store([20], mx.array([[90.0, 91.0, 92.0]], dtype=mx.float32))
++        mx.eval(cache.valid)
++        with pytest.raises(RuntimeError, match="no valid boundary-hidden"):
++            cache.read([0, 1, 5], token_position=11)
++
++    def test_missing_unaligned_or_out_of_range_boundary_fails_closed(self) -> None:
++        cache = QwenMTPBoundaryHiddenCache(
++            num_blocks=2,
++            block_size=4,
++            hidden_size=2,
++            dtype=mx.float16,
++        )
++        with pytest.raises(RuntimeError, match="not target-block aligned"):
++            cache.read([0, 1], token_position=6)
++        with pytest.raises(RuntimeError, match="missing the boundary-hidden block"):
++            cache.read([0], token_position=7)
++        with pytest.raises(RuntimeError, match="out of range"):
++            cache.read([0, 3], token_position=7)
++        with pytest.raises(RuntimeError, match="no valid boundary-hidden"):
++            cache.read([0, 1], token_position=7)
++        with pytest.raises(RuntimeError, match="slot is out of range"):
++            cache.store([8], mx.zeros((1, 2), dtype=mx.float16))
++
++
++class _FakeQwenMTPState:
++    ready = True
++
++    def __init__(self) -> None:
++        self.copy_calls = []
++        self.hidden_calls = []
++        self.pair_calls = []
++
++    def copy_blocks(self, copies):
++        self.copy_calls.append(list(copies))
++
++    def store_target_hidden(self, ctx, hidden_states):
++        self.hidden_calls.append((ctx, hidden_states))
++
++    def read_boundary_hidden(self, block_ids, token_position):
++        self.hidden_calls.append((block_ids, token_position))
++        return mx.ones((1, 4), dtype=mx.float32)
++
++    def run_pairs(self, **kwargs):
++        self.pair_calls.append(kwargs)
++        return 17
++
++    def extend_forward_eval_outputs(self, outputs):
++        outputs.append(mx.array([1], dtype=mx.int32))
++
++
++class TestHybridRuntimeQwenMTPContract:
++    def _runtime(self) -> HybridPagedAttentionRuntime:
++        runtime = HybridPagedAttentionRuntime.__new__(HybridPagedAttentionRuntime)
++        runtime._qwen_mtp_state = _FakeQwenMTPState()
++        runtime._mamba_cache_mode = "align"
++        return runtime
++
++    def test_capability_is_exposed_only_for_ready_align_state(self) -> None:
++        runtime = self._runtime()
++        assert runtime.qwen_mtp_ready
++        assert runtime.supports_hybrid_speculative_decode()
++        runtime._mamba_cache_mode = "none"
++        assert not runtime.supports_hybrid_speculative_decode()
++
++    def test_runtime_proxies_boundary_and_pair_operations(self) -> None:
++        runtime = self._runtime()
++        hidden = runtime.qwen_mtp_boundary_hidden([[1, 2], [3, 4]], 7)
++        assert hidden.shape == (1, 4)
++        draft = runtime.qwen_mtp_run_pairs(
++            hidden_rows=mx.ones((1, 4)),
++            next_token_ids=[9],
++            block_ids_by_group=[[1, 2], [3, 4]],
++            start_pos=7,
++        )
++        assert draft == 17
++        assert runtime._qwen_mtp_state.pair_calls[0]["start_pos"] == 7
++
++
++class TestHybridSpeculativeValidationGate:
++    @staticmethod
++    def _scheduler_output():
++        return SimpleNamespace(
++            scheduled_spec_decode_tokens={"r0": [10]},
++            num_invalid_spec_tokens={},
++            num_scheduled_tokens={"r0": 2},
++        )
++
++    @staticmethod
++    def _decode_reqs():
++        return [
++            (
++                "r0",
++                SimpleNamespace(
++                    sampling_params=SamplingParams(temperature=0),
++                ),
++            )
++        ]
++
++    def test_hybrid_verification_fails_without_transactional_runtime(self) -> None:
++        with pytest.raises(NotImplementedError, match="transactional paged Qwen MTP"):
++            SpeculativeDecodeController().validate_supported(
++                self._scheduler_output(),
++                self._decode_reqs(),
++                paged_attention_enabled=True,
++                is_hybrid=True,
++                speculative_config=SimpleNamespace(),
++                hybrid_speculative_ready=False,
++            )
++
++    def test_hybrid_verification_opens_with_transactional_runtime(self) -> None:
++        SpeculativeDecodeController().validate_supported(
++            self._scheduler_output(),
++            self._decode_reqs(),
++            paged_attention_enabled=True,
++            is_hybrid=True,
++            speculative_config=SimpleNamespace(),
++            hybrid_speculative_ready=True,
++        )
+diff --git a/tests/test_qwen_mtp_worker_budget.py b/tests/test_qwen_mtp_worker_budget.py
+new file mode 100644
+index 0000000..cace88e
+--- /dev/null
++++ b/tests/test_qwen_mtp_worker_budget.py
+@@ -0,0 +1,34 @@
++# SPDX-License-Identifier: Apache-2.0
++from __future__ import annotations
++
++from types import SimpleNamespace
++
++import pytest
++
++from vllm_metal.v1.cache_policy import WorkerCachePlanner
++
++
++class TestQwenMTPWorkerBudget:
++    def test_missing_optional_reporter_defaults_to_zero(self) -> None:
++        planner = WorkerCachePlanner(SimpleNamespace(model_runner=SimpleNamespace()))
++
++        assert planner._qwen_mtp_aux_bytes_per_block() == 0
++
++    def test_public_reporter_is_used(self) -> None:
++        planner = WorkerCachePlanner(
++            SimpleNamespace(
++                model_runner=SimpleNamespace(qwen_mtp_aux_bytes_per_block=lambda: 4096)
++            )
++        )
++
++        assert planner._qwen_mtp_aux_bytes_per_block() == 4096
++
++    def test_negative_reporter_fails_closed(self) -> None:
++        planner = WorkerCachePlanner(
++            SimpleNamespace(
++                model_runner=SimpleNamespace(qwen_mtp_aux_bytes_per_block=lambda: -1)
++            )
++        )
++
++        with pytest.raises(ValueError, match="cannot be negative"):
++            planner._qwen_mtp_aux_bytes_per_block()
+diff --git a/tests/test_qwen_native_mtp_proposer.py b/tests/test_qwen_native_mtp_proposer.py
+new file mode 100644
+index 0000000..d037d50
+--- /dev/null
++++ b/tests/test_qwen_native_mtp_proposer.py
+@@ -0,0 +1,272 @@
++# SPDX-License-Identifier: Apache-2.0
++from __future__ import annotations
++
++from types import SimpleNamespace
++
++import mlx.core as mx
++import pytest
++from vllm.sampling_params import SamplingParams
++
++from vllm_metal.v1.model_adapter import DefaultModelAdapter
++from vllm_metal.v1.proposer import ProposeContext, QwenNativeMTPProposer
++from vllm_metal.v1.spec_decode import PagedDecodeSegment
++
++VOCAB = 64
++
++
++class _FakeNativeMTPModel:
++    supports_mtp = True
++
++    def mtp_forward(self, hidden, next_token_ids, cache):
++        del hidden, cache
++        predicted = (next_token_ids.astype(mx.int32) + 1) % VOCAB
++        return mx.eye(VOCAB, dtype=mx.float32)[predicted] * 100.0
++
++    def __call__(self, input_ids, *, cache=None, return_hidden=False):
++        del cache
++        hidden = mx.repeat(input_ids[..., None].astype(mx.float32), 4, axis=-1)
++        target = (input_ids.astype(mx.int32) + 5) % VOCAB
++        logits = mx.eye(VOCAB, dtype=mx.float32)[target] * 100.0
++        if return_hidden:
++            return logits, hidden
++        return logits
++
++
++class _FakePagedRuntime:
++    qwen_mtp_ready = True
++
++    def __init__(self) -> None:
++        self.calls: list[dict[str, object]] = []
++        self.boundaries: dict[int, mx.array] = {}
++        self.boundary_reads: list[int] = []
++        self.fail_boundary = False
++
++    def supports_hybrid_speculative_decode(self) -> bool:
++        return True
++
++    def qwen_mtp_boundary_hidden(self, block_ids_by_group, token_position):
++        assert len(block_ids_by_group) == 2
++        self.boundary_reads.append(token_position)
++        if self.fail_boundary or token_position not in self.boundaries:
++            raise RuntimeError("missing boundary")
++        return self.boundaries[token_position]
++
++    def qwen_mtp_run_pairs(
++        self,
++        *,
++        hidden_rows,
++        next_token_ids,
++        block_ids_by_group,
++        start_pos,
++    ):
++        assert len(block_ids_by_group) == 2
++        tokens = [int(token) for token in next_token_ids]
++        self.calls.append(
++            {
++                "start_pos": start_pos,
++                "tokens": tokens,
++                "hidden": [float(row[0].item()) for row in hidden_rows],
++                "mtp_blocks": list(block_ids_by_group[1]),
++            }
++        )
++        return (tokens[-1] + 1) % VOCAB
++
++
++class _Controller:
++    @staticmethod
++    def can_draft_greedy(req_id, state):
++        del req_id, state
++        return True
++
++
++def _runner(model=None, width=1, runtime=None):
++    return SimpleNamespace(
++        _forward_model=model or _FakeNativeMTPModel(),
++        _paged_attention_runtime=runtime or _FakePagedRuntime(),
++        vllm_config=SimpleNamespace(
++            speculative_config=SimpleNamespace(
++                method="mtp",
++                num_speculative_tokens=width,
++            )
++        ),
++        _spec_decode_controller=_Controller(),
++    )
++
++
++def _ctx(
++    *,
++    hidden,
++    decode_reqs=(),
++    decode_segments=(),
++    decode_token_ids=(),
++    prefill_reqs=(),
++    prefill_token_ids=(),
++    prefill_result_modes=(),
++    request_states=None,
++    cu_seqlens=(0,),
++    finished_req_ids=None,
++):
++    return ProposeContext(
++        target_hidden_states=hidden,
++        decode_reqs=decode_reqs,
++        decode_segments=decode_segments,
++        decode_token_ids=decode_token_ids,
++        prefill_reqs=prefill_reqs,
++        prefill_token_ids=prefill_token_ids,
++        prefill_result_modes=prefill_result_modes,
++        request_states=request_states or {},
++        cu_seqlens=cu_seqlens,
++        num_decode_segments=len(decode_segments),
++        num_speculative_tokens=1,
++        finished_req_ids=finished_req_ids or set(),
++    )
++
++
++def _hidden(*token_ids):
++    values = mx.array(token_ids, dtype=mx.float32)
++    return mx.repeat(values[:, None], 4, axis=-1)
++
++
++def _prefill(req_id, token_ids, start_pos):
++    return SimpleNamespace(
++        req_id=req_id,
++        token_ids=list(token_ids),
++        start_pos=start_pos,
++        block_ids=[[2, 3, 4, 5], [20, 21, 22, 23]],
++    )
++
++
++class TestQwenTargetHiddenContract:
++    def test_adapter_uses_model_logits_and_pre_norm_hidden(self) -> None:
++        model = _FakeNativeMTPModel()
++        output = DefaultModelAdapter().target_forward(
++            model,
++            mx.array([[2, 3]], dtype=mx.int32),
++            collect_hidden_states=True,
++        )
++        assert mx.argmax(output.logits[0, 0]).item() == 7
++        assert output.hidden_states is not None
++        assert output.hidden_states.shape == (2, 4)
++        assert output.hidden_states[0, 0].item() == 2.0
++
++
++class TestQwenNativeMTPProposerPagedTransaction:
++    def test_requires_the_trained_one_token_width(self) -> None:
++        with pytest.raises(ValueError, match="exactly one speculative token"):
++            QwenNativeMTPProposer(_runner(width=3))
++
++    def test_collects_hidden_states_for_intermediate_prefill(self) -> None:
++        proposer = QwenNativeMTPProposer(_runner())
++        assert proposer.needs_target_hidden_states([], has_final_prefill=False)
++
++    def test_chunked_prefill_decode_and_release_use_scheduler_positions(self) -> None:
++        runtime = _FakePagedRuntime()
++        proposer = QwenNativeMTPProposer(_runner(runtime=runtime))
++        sampling = SamplingParams(temperature=0)
++        state = SimpleNamespace(sampling_params=sampling)
++
++        result = proposer.propose(
++            _ctx(
++                hidden=_hidden(1, 2, 3),
++                prefill_reqs=[_prefill("r0", [1, 2, 3], 0)],
++                prefill_token_ids=[0],
++                prefill_result_modes=["intermediate"],
++                request_states={"r0": state},
++                cu_seqlens=[0, 3],
++            )
++        )
++        assert result is None
++        assert runtime.calls[-1]["start_pos"] == 0
++        assert runtime.calls[-1]["tokens"] == [2, 3]
++
++        result = proposer.propose(
++            _ctx(
++                hidden=_hidden(4, 5),
++                prefill_reqs=[_prefill("r0", [4, 5], 3)],
++                prefill_token_ids=[6],
++                prefill_result_modes=["new_final"],
++                request_states={"r0": state},
++                cu_seqlens=[0, 2],
++            )
++        )
++        assert result is not None
++        assert result.draft_token_ids == [[7]]
++        assert [(c["start_pos"], c["tokens"]) for c in runtime.calls[-2:]] == [
++            (2, [4, 5]),
++            (4, [6]),
++        ]
++
++        segment = PagedDecodeSegment(
++            req_id="r0",
++            input_token_ids=(6, 7),
++            start_row=0,
++            num_query_tokens=2,
++            draft_token_ids=(7,),
++            cache_start_pos=5,
++            block_ids=((2, 3, 4, 5), (20, 21, 22, 23)),
++        )
++        result = proposer.propose(
++            _ctx(
++                hidden=_hidden(6, 7),
++                decode_reqs=[("r0", state)],
++                decode_segments=[segment],
++                decode_token_ids=[[7, 8]],
++                request_states={"r0": state},
++                cu_seqlens=[0, 2],
++            )
++        )
++        assert result is not None
++        assert result.draft_token_ids == [[9]]
++        assert runtime.calls[-1]["start_pos"] == 5
++        assert runtime.calls[-1]["tokens"] == [7, 8]
++
++        proposer.release_requests({"r0"})
++        assert "r0" not in proposer._states
++
++    def test_scheduler_prefix_hit_resumes_after_eagle_recompute_boundary(self) -> None:
++        runtime = _FakePagedRuntime()
++        runtime.boundaries[99] = _hidden(99)
++        proposer = QwenNativeMTPProposer(_runner(runtime=runtime))
++        state = SimpleNamespace(sampling_params=SamplingParams(temperature=0))
++
++        result = proposer.propose(
++            _ctx(
++                hidden=_hidden(100, 101),
++                prefill_reqs=[_prefill("hit", [100, 101], 100)],
++                prefill_token_ids=[102],
++                prefill_result_modes=["cached_final"],
++                request_states={"hit": state},
++                cu_seqlens=[0, 2],
++            )
++        )
++        assert result is not None
++        assert result.draft_token_ids == [[39]]  # (102 + 1) % 64
++        assert runtime.boundary_reads == [99]
++        # The retained MTP shared tail is not overwritten at position 99. The
++        # EAGLE-dropped suffix recomputes target hidden 100 first, then MTP
++        # resumes at logical position 100.
++        assert [(c["start_pos"], c["tokens"]) for c in runtime.calls] == [
++            (100, [101]),
++            (101, [102]),
++        ]
++        assert runtime.calls[0]["hidden"] == [100.0]
++        assert "hit" not in proposer._prefix_hit_blocked
++
++    def test_missing_boundary_fails_closed_without_fresh_mtp_state(self) -> None:
++        runtime = _FakePagedRuntime()
++        runtime.fail_boundary = True
++        proposer = QwenNativeMTPProposer(_runner(runtime=runtime))
++        state = SimpleNamespace(sampling_params=SamplingParams(temperature=0))
++        result = proposer.propose(
++            _ctx(
++                hidden=_hidden(100, 101),
++                prefill_reqs=[_prefill("hit", [100, 101], 100)],
++                prefill_token_ids=[102],
++                prefill_result_modes=["cached_final"],
++                request_states={"hit": state},
++                cu_seqlens=[0, 2],
++            )
++        )
++        assert result is None
++        assert runtime.calls == []
++        assert "hit" in proposer._prefix_hit_blocked
+diff --git a/tests/test_v1_model_runner_generate.py b/tests/test_v1_model_runner_generate.py
+index 2c683e0..06103a3 100644
+--- a/tests/test_v1_model_runner_generate.py
++++ b/tests/test_v1_model_runner_generate.py
+@@ -81,6 +81,18 @@ class ForwardOutputRuntimeStub:
+         return None
+ 
+ 
++class SpeculativeCommitRuntimeStub:
++    def __init__(self) -> None:
++        self.calls: list[dict[str, object]] = []
++        self.materialize_calls = 0
++
++    def commit_speculative_state(self, **kwargs) -> None:
++        self.calls.append(kwargs)
++
++    def materialize_pending_state(self) -> None:
++        self.materialize_calls += 1
++
++
+ class PoolingForwardBackendStub:
+     def __init__(self, hidden_states: mx.array) -> None:
+         self.hidden_states = hidden_states
+@@ -136,6 +148,74 @@ class TestDrafterReleaseOnLifecycle:
+         assert released == [{"done", "paused", "back"}]
+ 
+ 
++class TestHybridSpeculativeStatePromotion:
++    @staticmethod
++    def _segment(
++        req_id: str,
++        *,
++        start_row: int,
++        cache_start_pos: int,
++        drafts: tuple[int, ...],
++    ) -> PagedDecodeSegment:
++        return PagedDecodeSegment(
++            req_id=req_id,
++            input_token_ids=(9, *drafts),
++            start_row=start_row,
++            num_query_tokens=1 + len(drafts),
++            draft_token_ids=drafts,
++            cache_start_pos=cache_start_pos,
++            block_ids=((2, 3, 6, 7),),
++        )
++
++    def test_commits_only_speculative_requests_with_sampled_lengths(self) -> None:
++        runner = make_stub_runner(tokenizer=object())
++        runner.model_args = {"full_attention_interval": 2}
++        runner.cache_config = SimpleNamespace(mamba_cache_mode="align")
++        runtime = SpeculativeCommitRuntimeStub()
++        runner._paged_attention_runtime = runtime
++        runner._state_block_ids_by_req = {
++            "spec": [[2, 3, 6, 7]],
++            "plain": [[8, 9]],
++        }
++        spec_segment = self._segment(
++            "spec", start_row=0, cache_start_pos=5, drafts=(10, 11)
++        )
++        plain_segment = self._segment(
++            "plain", start_row=3, cache_start_pos=12, drafts=()
++        )
++
++        runner._commit_hybrid_speculative_state(
++            decode_reqs=[("spec", object()), ("plain", object())],
++            decode_segments=(spec_segment, plain_segment),
++            decode_token_ids=[[10, 99], [12]],
++        )
++
++        assert runtime.materialize_calls == 1
++        assert runtime.calls == [
++            {
++                "req_ids": ["spec"],
++                "state_block_ids": [[[2, 3, 6, 7]]],
++                "step_positions": [(5, 3)],
++                "num_sampled_tokens": [2],
++            }
++        ]
++
++    def test_rejects_impossible_verifier_output_length(self) -> None:
++        runner = make_stub_runner(tokenizer=object())
++        runner.model_args = {"full_attention_interval": 2}
++        runner.cache_config = SimpleNamespace(mamba_cache_mode="align")
++        runner._paged_attention_runtime = SpeculativeCommitRuntimeStub()
++        runner._state_block_ids_by_req = {"spec": [[2, 3, 6, 7]]}
++        segment = self._segment("spec", start_row=0, cache_start_pos=5, drafts=(10, 11))
++
++        with pytest.raises(RuntimeError, match="emitted 0 tokens"):
++            runner._commit_hybrid_speculative_state(
++                decode_reqs=[("spec", object())],
++                decode_segments=(segment,),
++                decode_token_ids=[[]],
++            )
++
++
+ class TestV1MetalModelRunnerGenerate:
+     def _make_runner(self) -> mr.MetalModelRunner:
+         return make_stub_runner(tokenizer=object())
+diff --git a/vllm_metal/attention/context.py b/vllm_metal/attention/context.py
+index cfb8b87..1ba4c7a 100644
+--- a/vllm_metal/attention/context.py
++++ b/vllm_metal/attention/context.py
+@@ -71,6 +71,12 @@ class PagedAttentionContext:
+     # block id / state slab).
+     gdn_slot_mapping: list[int] | None = None
+     gdn_group_slot_mappings: tuple[list[int], ...] | None = None
++    # Align-mode speculative verification needs one observable GDN state after
++    # every input token. Per group, each request therefore receives a chain
++    # ``[initial, after_token_0, ..., after_token_K]``. Empty request entries
++    # keep the ordinary one-destination path. The runtime safety gate remains
++    # active until the GDN wrapper consumes this contract.
++    gdn_group_state_chains: tuple[list[list[int]], ...] | None = None
+     # Number of decode requests packed at the front of the batch.
+     # This lets attention wrappers distinguish pure prefill from mixed prefill+decode
+     # without reverse-engineering one-token segments from ``cu_seqlens``.
+diff --git a/vllm_metal/attention/impls/linear.py b/vllm_metal/attention/impls/linear.py
+index 07e3e95..a2d56af 100644
+--- a/vllm_metal/attention/impls/linear.py
++++ b/vllm_metal/attention/impls/linear.py
+@@ -13,7 +13,7 @@ from typing import Any
+ 
+ import mlx.core as mx
+ import mlx.nn as nn
+-from mlx_lm.models.gated_delta import compute_g
++from mlx_lm.models.gated_delta import compute_g, gated_delta_kernel
+ 
+ from vllm_metal.attention.caches.gdn_cache import GDNPagedStateCache
+ from vllm_metal.attention.context import PagedAttentionContext, get_context
+@@ -45,6 +45,9 @@ class _GDNForwardState:
+     total_tokens: int
+     slot_ids: list[int]
+     num_decode_requests: int
++    # Per request: [initial, after_token_0, ..., after_token_K]. Empty
++    # entries retain the ordinary one-destination path.
++    state_chains: list[list[int]] | None = None
+ 
+ 
+ @dataclass(frozen=True)
+@@ -168,6 +171,25 @@ class GDNPagedAttentionWrapper(nn.Module):
+             raise RuntimeError("GDN wrapper requires unique slots per request")
+         self._gdn_state_cache.require_allocated_slots(slot_ids)
+ 
++        state_chains = None
++        if ctx.gdn_group_state_chains is not None:
++            ordinal = self._gdn_state_cache.layer_group_ordinal(self._gdn_cache_idx)
++            state_chains = ctx.gdn_group_state_chains[ordinal]
++            if len(state_chains) != num_requests:
++                raise RuntimeError(
++                    "GDN wrapper requires one speculative state chain per request"
++                )
++            for req_idx, chain in enumerate(state_chains):
++                if not chain:
++                    continue
++                request_tokens = cu_seqlens[req_idx + 1] - cu_seqlens[req_idx]
++                if len(chain) != request_tokens + 1:
++                    raise RuntimeError(
++                        f"GDN request {req_idx} has {request_tokens} input tokens "
++                        f"but a {len(chain)}-entry state chain"
++                    )
++                self._gdn_state_cache.require_allocated_slots(chain)
++
+         return _GDNForwardState(
+             x=x,
+             cu_seqlens=cu_seqlens,
+@@ -175,6 +197,7 @@ class GDNPagedAttentionWrapper(nn.Module):
+             total_tokens=x.shape[1],
+             slot_ids=slot_ids,
+             num_decode_requests=ctx.num_decode_requests,
++            state_chains=state_chains,
+         )
+ 
+     def _project_inputs(
+@@ -212,6 +235,9 @@ class GDNPagedAttentionWrapper(nn.Module):
+ 
+     def _run_conv(self, mixed_qkv: mx.array, state: _GDNForwardState) -> mx.array:
+         # === Step 2: Conv1d (per-request, needs conv_state) ===
++        if state.state_chains is not None and any(state.state_chains):
++            return self._run_conv_state_chains(mixed_qkv, state)
++
+         inner = self._inner
+         state_cache = self._gdn_state_cache
+         cache_idx = self._gdn_cache_idx
+@@ -271,6 +297,54 @@ class GDNPagedAttentionWrapper(nn.Module):
+ 
+         return mx.concatenate(conv_outputs, axis=1)
+ 
++    def _run_conv_state_chains(
++        self, mixed_qkv: mx.array, state: _GDNForwardState
++    ) -> mx.array:
++        """Produce an observable conv-state checkpoint after every token.
++
++        This is the correctness-first path for speculative verification. It is
++        intentionally request/token sequential; ordinary decode and prefill
++        remain on their existing fused/lazy kernels.
++        """
++        inner = self._inner
++        state_cache = self._gdn_state_cache
++        cache_idx = self._gdn_cache_idx
++        state_cache.apply_pending_conv_state(cache_idx)
++        pool = state_cache.conv_states[cache_idx]
++        outputs: list[mx.array] = []
++
++        assert state.state_chains is not None
++        for req_idx in range(state.num_requests):
++            start = state.cu_seqlens[req_idx]
++            end = state.cu_seqlens[req_idx + 1]
++            request_qkv = mixed_qkv[:, start:end, :]
++            chain = state.state_chains[req_idx]
++
++            if not chain:
++                slot = state.slot_ids[req_idx]
++                conv_state = pool[slot : slot + 1]
++                conv_input = mx.concatenate([conv_state, request_qkv], axis=1)
++                new_conv = conv_input[:, -(inner.conv_kernel_size - 1) :]
++                pool[slot : slot + 1] = new_conv
++                conv_out = nn.silu(inner.conv1d(conv_input))
++                outputs.append(conv_out[:, -(end - start) :, :])
++                continue
++
++            conv_state = pool[chain[0] : chain[0] + 1]
++            request_outputs: list[mx.array] = []
++            for token_offset, dst in enumerate(chain[1:]):
++                token_qkv = request_qkv[:, token_offset : token_offset + 1, :]
++                conv_input = mx.concatenate([conv_state, token_qkv], axis=1)
++                new_conv = conv_input[:, -(inner.conv_kernel_size - 1) :]
++                pool[dst : dst + 1] = new_conv
++                conv_state = new_conv
++                conv_out = nn.silu(inner.conv1d(conv_input))
++                request_outputs.append(conv_out[:, -1:, :])
++            outputs.append(mx.concatenate(request_outputs, axis=1))
++
++        state_cache.store_conv_state(cache_idx, pool)
++        return mx.concatenate(outputs, axis=1)
++
+     def _split_and_normalize(
+         self, conv_packed: mx.array, state: _GDNForwardState
+     ) -> tuple[mx.array, mx.array, mx.array]:
+@@ -313,6 +387,9 @@ class GDNPagedAttentionWrapper(nn.Module):
+         state: _GDNForwardState,
+     ) -> mx.array:
+         # === Step 5: Batched recurrent update ===
++        if state.state_chains is not None and any(state.state_chains):
++            return self._run_recurrent_state_chains(q, k, v, g, beta, state)
++
+         if state.num_decode_requests == state.num_requests:
+             request = GDNRecurrentDecodeRequest(
+                 q=q,
+@@ -351,6 +428,62 @@ class GDNPagedAttentionWrapper(nn.Module):
+         self._gdn_state_cache.apply_pending_recurrent_state(self._gdn_cache_idx)
+         return self._run_recurrent_fallback(q, k, v, g, beta, state)
+ 
++    def _run_recurrent_state_chains(
++        self,
++        q: mx.array,
++        k: mx.array,
++        v: mx.array,
++        g: mx.array,
++        beta: mx.array,
++        state: _GDNForwardState,
++    ) -> mx.array:
++        """Produce one recurrent-state snapshot per verification token."""
++        state_cache = self._gdn_state_cache
++        cache_idx = self._gdn_cache_idx
++        state_cache.apply_pending_recurrent_state(cache_idx)
++        pool = state_cache.recurrent_states[cache_idx]
++        outputs: list[mx.array] = []
++
++        assert state.state_chains is not None
++        for req_idx in range(state.num_requests):
++            start = state.cu_seqlens[req_idx]
++            end = state.cu_seqlens[req_idx + 1]
++            chain = state.state_chains[req_idx]
++
++            if not chain:
++                slot = state.slot_ids[req_idx]
++                request_output, new_state = gated_delta_kernel(
++                    q[:, start:end],
++                    k[:, start:end],
++                    v[:, start:end],
++                    g[:, start:end],
++                    beta[:, start:end],
++                    pool[slot : slot + 1],
++                )
++                pool[slot : slot + 1] = new_state
++                outputs.append(request_output.reshape(end - start, *v.shape[2:]))
++                continue
++
++            recurrent_state = pool[chain[0] : chain[0] + 1]
++            request_outputs: list[mx.array] = []
++            for token_offset, dst in enumerate(chain[1:]):
++                token = start + token_offset
++                token_output, new_state = gated_delta_kernel(
++                    q[:, token : token + 1],
++                    k[:, token : token + 1],
++                    v[:, token : token + 1],
++                    g[:, token : token + 1],
++                    beta[:, token : token + 1],
++                    recurrent_state,
++                )
++                pool[dst : dst + 1] = new_state
++                recurrent_state = new_state
++                request_outputs.append(token_output.reshape(1, *v.shape[2:]))
++            outputs.append(mx.concatenate(request_outputs, axis=0))
++
++        state_cache.store_recurrent_state(cache_idx, pool)
++        return mx.concatenate(outputs, axis=0).astype(state.x.dtype)
++
+     def _should_try_recurrent_prefill_containing_lazy(
+         self, state: _GDNForwardState
+     ) -> bool:
+diff --git a/vllm_metal/attention/runtime/hybrid.py b/vllm_metal/attention/runtime/hybrid.py
+index f15048c..0cec665 100644
+--- a/vllm_metal/attention/runtime/hybrid.py
++++ b/vllm_metal/attention/runtime/hybrid.py
+@@ -35,6 +35,7 @@ from vllm_metal.attention.impls.sdpa_wrapper import (
+ from vllm_metal.attention.patching import walk_and_wrap
+ from vllm_metal.attention.runtime.base import PagedAttentionRuntimeBase
+ from vllm_metal.attention.state import AlignGDNStateManager, HybridGDNStateManager
++from vllm_metal.v1.qwen_mtp_paged import QwenMTPPagedState
+ 
+ logger = init_logger(__name__)
+ 
+@@ -50,6 +51,7 @@ def _build_linear_layer_spec(
+     page_size_padded: int | None = None,
+     mamba_block_size: int,
+     mamba_cache_mode: str = "none",
++    num_speculative_blocks: int = 0,
+ ) -> MambaSpec:
+     """Build the scheduler-visible GDN state spec.
+ 
+@@ -66,6 +68,7 @@ def _build_linear_layer_spec(
+         page_size_padded=page_size_padded,
+         mamba_type=MambaAttentionBackendEnum.GDN_ATTN,
+         mamba_cache_mode=mamba_cache_mode,
++        num_speculative_blocks=num_speculative_blocks,
+     )
+ 
+ 
+@@ -96,6 +99,10 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+         dtype: mx.Dtype,
+         # Scheduler-side mamba caching strategy ("none" or "align").
+         mamba_cache_mode: str = "none",
++        # One scheduler-owned GDN snapshot block per possible draft token.
++        num_speculative_blocks: int = 0,
++        # Optional native-Qwen MTP cache transaction.
++        qwen_mtp_state: QwenMTPPagedState | None = None,
+         # TurboQuant (SDPA layers only)
+         turboquant: bool = False,
+         k_quant: str | None = None,
+@@ -110,6 +117,10 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+                 f"{mamba_cache_mode!r} (only 'none' and 'align')"
+             )
+         self._mamba_cache_mode = mamba_cache_mode
++        if num_speculative_blocks < 0:
++            raise ValueError("num_speculative_blocks must be non-negative")
++        self._num_speculative_blocks = num_speculative_blocks
++        self._qwen_mtp_state = qwen_mtp_state
+ 
+         # SDPA params
+         self._num_kv_heads = num_kv_heads
+@@ -181,10 +192,19 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+             dtype=self._dtype,
+         )
+         self._gdn_state_manager = (
+-            AlignGDNStateManager(self._state_cache, self._block_size)
++            AlignGDNStateManager(
++                self._state_cache,
++                self._block_size,
++                self._num_speculative_blocks,
++            )
+             if align
+             else HybridGDNStateManager(self._state_cache)
+         )
++        if self._qwen_mtp_state is not None:
++            self._qwen_mtp_state.initialize(
++                num_blocks=num_blocks,
++                block_size=self._block_size,
++            )
+ 
+         logger.info(
+             "Hybrid cache initialized: %d SDPA layers (%d blocks), "
+@@ -205,6 +225,8 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+         state_group_indices: tuple[int, ...] = (),
+         layer_group_ordinals: list[int] | None = None,
+         layer_pool_ordinals: list[int] | None = None,
++        mtp_group_index: int | None = None,
++        mtp_block_size: int | None = None,
+     ) -> None:
+         """Select the vLLM scheduler groups backing this runtime.
+ 
+@@ -223,8 +245,22 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+                 "hybrid paged attention requires the SDPA scheduler group "
+                 f"block size to stay {self._block_size}, got {block_size}"
+             )
+-        self._scheduler_group_indices = (group_index,)
+-        self._group_block_sizes = (block_size,)
++        if self._qwen_mtp_state is not None:
++            if mtp_group_index is None or mtp_block_size is None:
++                raise RuntimeError(
++                    "native Qwen MTP runtime is missing its scheduler cache group"
++                )
++            self._qwen_mtp_state.configure_groups(
++                target_group_index=group_index,
++                mtp_group_index=mtp_group_index,
++                target_block_size=block_size,
++                mtp_block_size=mtp_block_size,
++            )
++            self._scheduler_group_indices = (group_index, mtp_group_index)
++            self._group_block_sizes = (block_size, mtp_block_size)
++        else:
++            self._scheduler_group_indices = (group_index,)
++            self._group_block_sizes = (block_size,)
+         self._state_group_indices = tuple(state_group_indices)
+         if layer_group_ordinals is not None:
+             pool_ordinals = (
+@@ -311,6 +347,8 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+         self.kv_cache.copy_blocks(block_copies)
+         if self._mamba_cache_mode == "align":
+             self.state_cache.copy_blocks(block_copies)
++        if self._qwen_mtp_state is not None:
++            self._qwen_mtp_state.copy_blocks(block_copies)
+ 
+     def populate_step_context(
+         self,
+@@ -327,8 +365,74 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+             step_positions=step_positions,
+         )
+ 
++    def commit_speculative_state(
++        self,
++        *,
++        req_ids: list[str],
++        state_block_ids: list[list[list[int]]],
++        step_positions: list[tuple[int, int]],
++        num_sampled_tokens: list[int],
++    ) -> None:
++        if not isinstance(self.gdn_state_manager, AlignGDNStateManager):
++            raise RuntimeError(
++                "scheduler-owned speculative GDN state requires mamba_cache_mode='align'"
++            )
++        self.gdn_state_manager.commit_speculative_state(
++            req_ids=req_ids,
++            state_block_ids=state_block_ids,
++            step_positions=step_positions,
++            num_sampled_tokens=num_sampled_tokens,
++        )
++
++    @property
++    def qwen_mtp_ready(self) -> bool:
++        return self._qwen_mtp_state is not None and self._qwen_mtp_state.ready
++
++    def supports_hybrid_speculative_decode(self) -> bool:
++        return self._mamba_cache_mode == "align" and self.qwen_mtp_ready
++
++    def store_qwen_mtp_target_hidden(
++        self,
++        ctx: PagedAttentionContext,
++        hidden_states: mx.array,
++    ) -> None:
++        if self._qwen_mtp_state is None:
++            return
++        self._qwen_mtp_state.store_target_hidden(ctx, hidden_states)
++
++    def qwen_mtp_boundary_hidden(
++        self,
++        block_ids_by_group: Sequence[Sequence[int]],
++        token_position: int,
++    ) -> mx.array:
++        if self._qwen_mtp_state is None:
++            raise RuntimeError("Qwen MTP boundary state is not installed")
++        return self._qwen_mtp_state.read_boundary_hidden(
++            block_ids_by_group,
++            token_position,
++        )
++
++    def qwen_mtp_run_pairs(
++        self,
++        *,
++        hidden_rows: mx.array,
++        next_token_ids: Sequence[int],
++        block_ids_by_group: Sequence[Sequence[int]],
++        start_pos: int,
++    ) -> int:
++        if self._qwen_mtp_state is None:
++            raise RuntimeError("Qwen MTP paged state is not installed")
++        return self._qwen_mtp_state.run_pairs(
++            hidden_rows=hidden_rows,
++            next_token_ids=next_token_ids,
++            block_ids_by_group=block_ids_by_group,
++            start_pos=start_pos,
++        )
++
+     def extend_forward_eval_outputs(self, outputs: list[mx.array]) -> None:
+         self.gdn_state_manager.extend_forward_eval_outputs(outputs)
++        if self._qwen_mtp_state is not None:
++            self._qwen_mtp_state.extend_forward_eval_outputs(outputs)
+ 
+     def release_requests(self, req_ids: set[str]) -> None:
+         self.gdn_state_manager.release_requests(req_ids)
+diff --git a/vllm_metal/attention/state/align.py b/vllm_metal/attention/state/align.py
+index 5d870b6..437f209 100644
+--- a/vllm_metal/attention/state/align.py
++++ b/vllm_metal/attention/state/align.py
+@@ -42,9 +42,17 @@ if TYPE_CHECKING:
+ class AlignGDNStateManager:
+     """Drive block-indexed GDN state for align-mode prefix caching."""
+ 
+-    def __init__(self, state_cache: GDNPagedStateCache, block_size: int) -> None:
++    def __init__(
++        self,
++        state_cache: GDNPagedStateCache,
++        block_size: int,
++        num_speculative_blocks: int = 0,
++    ) -> None:
++        if num_speculative_blocks < 0:
++            raise ValueError("num_speculative_blocks must be non-negative")
+         self._state_cache = state_cache
+         self._block_size = block_size
++        self._num_speculative_blocks = num_speculative_blocks
+         self._needs_materialize = False
+ 
+     @property
+@@ -101,8 +109,11 @@ class AlignGDNStateManager:
+             self._state_cache.ensure_capacity(target)
+ 
+         group_mappings: list[list[int]] = []
++        group_state_chains: list[list[list[int]]] = []
++        has_speculative_chains = False
+         for group in range(num_groups):
+             dst_ids: list[int] = []
++            request_chains: list[list[int]] = []
+             copy_src: list[int] = []
+             copy_dst: list[int] = []
+             zero_ids: list[int] = []
+@@ -113,6 +124,43 @@ class AlignGDNStateManager:
+                         f"align GDN state manager: request "
+                         f"{req_ids[req_idx]!r} scheduled {num_scheduled} tokens"
+                     )
++
++                is_speculative_verify = (
++                    self._num_speculative_blocks > 0
++                    and req_idx < ctx.num_decode_requests
++                    and num_scheduled > 1
++                )
++                if is_speculative_verify:
++                    if num_computed <= 0:
++                        raise RuntimeError(
++                            "speculative GDN verification requires an existing "
++                            "committed state"
++                        )
++                    num_drafts = num_scheduled - 1
++                    if num_drafts > self._num_speculative_blocks:
++                        raise RuntimeError(
++                            f"request {req_ids[req_idx]!r} scheduled {num_drafts} "
++                            "draft tokens but its MambaSpec reserves only "
++                            f"{self._num_speculative_blocks} speculative blocks"
++                        )
++                    state_idx = (num_computed - 1) // self._block_size
++                    end = state_idx + num_scheduled
++                    if end > len(row):
++                        raise RuntimeError(
++                            f"request {req_ids[req_idx]!r} needs GDN state "
++                            f"columns [{state_idx}, {end}) but its mamba block "
++                            f"table has {len(row)} entries"
++                        )
++                    # This mirrors upstream mamba_get_block_table_tensor():
++                    # current state block followed by K speculative blocks.
++                    output_slots = list(row[state_idx:end])
++                    # Token zero reads and overwrites the current private state
++                    # block; each draft writes the following speculative block.
++                    request_chains.append([output_slots[0], *output_slots])
++                    dst_ids.append(output_slots[-1])
++                    has_speculative_chains = True
++                    continue
++
+                 dst_idx = (num_computed + num_scheduled - 1) // self._block_size
+                 if dst_idx >= len(row):
+                     raise RuntimeError(
+@@ -123,6 +171,7 @@ class AlignGDNStateManager:
+                     )
+                 dst = row[dst_idx]
+                 dst_ids.append(dst)
++                request_chains.append([])
+                 if num_computed == 0:
+                     zero_ids.append(dst)
+                     continue
+@@ -136,8 +185,69 @@ class AlignGDNStateManager:
+             self._state_cache.zero_slots(zero_ids, layer_indices)
+             self._state_cache.copy_slots(copy_src, copy_dst, layer_indices)
+             group_mappings.append(dst_ids)
++            group_state_chains.append(request_chains)
+ 
+         ctx.gdn_group_slot_mappings = tuple(group_mappings)
++        ctx.gdn_group_state_chains = (
++            tuple(group_state_chains) if has_speculative_chains else None
++        )
++        self._needs_materialize = True
++
++    def commit_speculative_state(
++        self,
++        *,
++        req_ids: list[str],
++        state_block_ids: list[list[list[int]]],
++        step_positions: list[tuple[int, int]],
++        num_sampled_tokens: list[int],
++    ) -> None:
++        """Promote the verifier-selected GDN checkpoint.
++
++        A verification window with ``K`` drafts writes state after each of its
++        ``K + 1`` input tokens into consecutive Mamba block-table columns.
++        The verifier emits ``num_sampled`` tokens; upstream's invariant is that
++        the committed recurrent checkpoint is column ``num_sampled - 1``.
++        """
++        if not (
++            len(req_ids)
++            == len(state_block_ids)
++            == len(step_positions)
++            == len(num_sampled_tokens)
++        ):
++            raise RuntimeError("speculative GDN commit metadata length mismatch")
++
++        self._state_cache.apply_pending_states()
++        num_groups = len(state_block_ids[0]) if state_block_ids else 0
++        for group in range(num_groups):
++            copy_src: list[int] = []
++            copy_dst: list[int] = []
++            for req_idx, (num_computed, num_scheduled) in enumerate(step_positions):
++                if num_scheduled <= 1:
++                    continue
++                sampled = num_sampled_tokens[req_idx]
++                if sampled < 1 or sampled > num_scheduled:
++                    raise RuntimeError(
++                        f"request {req_ids[req_idx]!r} sampled {sampled} tokens "
++                        f"for a {num_scheduled}-token verification window"
++                    )
++                row = state_block_ids[req_idx][group]
++                state_idx = (num_computed - 1) // self._block_size
++                selected_idx = state_idx + sampled - 1
++                committed_idx = (num_computed + sampled - 1) // self._block_size
++                if max(selected_idx, committed_idx) >= len(row):
++                    raise RuntimeError(
++                        f"request {req_ids[req_idx]!r} speculative commit "
++                        "exceeds its mamba block table"
++                    )
++                selected = row[selected_idx]
++                committed = row[committed_idx]
++                if selected != committed:
++                    copy_src.append(selected)
++                    copy_dst.append(committed)
++
++            layer_indices = self._state_cache.layers_for_group_ordinal(group)
++            self._state_cache.copy_slots(copy_src, copy_dst, layer_indices)
++
+         self._needs_materialize = True
+ 
+     def extend_forward_eval_outputs(self, outputs: list[mx.array]) -> None:
+diff --git a/vllm_metal/platform.py b/vllm_metal/platform.py
+index 4676e65..366a086 100644
+--- a/vllm_metal/platform.py
++++ b/vllm_metal/platform.py
+@@ -487,12 +487,28 @@ class MetalPlatform(Platform):
+                 cache_config.enable_prefix_caching
+                 and vllm_config.speculative_config is not None
+             ):
+-                raise NotImplementedError(
+-                    "Prefix caching for hybrid GDN models on Metal does not "
+-                    "support speculative decoding yet: draft-state rollback "
+-                    "across mamba state blocks (num_speculative_blocks) is "
+-                    "not implemented. Disable one of the two."
++                hf_config = model_config.hf_config
++                get_text_config = getattr(hf_config, "get_text_config", None)
++                text_config = (
++                    get_text_config() if callable(get_text_config) else hf_config
++                )
++                speculative_config = vllm_config.speculative_config
++                native_qwen_mtp = (
++                    getattr(speculative_config, "method", None) == "mtp"
++                    and int(
++                        getattr(speculative_config, "num_speculative_tokens", 0) or 0
++                    )
++                    == 1
++                    and int(getattr(text_config, "mtp_num_hidden_layers", 0)) > 0
++                    and cache_config.mamba_cache_mode == "align"
++                    and config.use_paged_attention
+                 )
++                if not native_qwen_mtp:
++                    raise NotImplementedError(
++                        "Hybrid prefix caching plus speculative decoding on "
++                        "Metal is supported only for one-token native Qwen MTP "
++                        "with paged attention and mamba_cache_mode='align'."
++                    )
+ 
+         # Pipeline parallelism is supported on Metal/MLX: each stage runs in its
+         # own worker process and the inter-stage activations cross the
+diff --git a/vllm_metal/v1/cache_policy.py b/vllm_metal/v1/cache_policy.py
+index 2a43f8e..89e03a0 100644
+--- a/vllm_metal/v1/cache_policy.py
++++ b/vllm_metal/v1/cache_policy.py
+@@ -45,6 +45,10 @@ from vllm_metal.pytorch_backend.tensor_bridge import MLX_TO_TORCH_DTYPE
+ from vllm_metal.stt.policy import STT_SCHED_AVAILABLE_BYTES
+ from vllm_metal.v1.gemma4_mtp import Gemma4MTPTargetMetadata
+ from vllm_metal.v1.model_adapter import ModelAdapter
++from vllm_metal.v1.qwen_mtp_paged import (
++    QwenMTPAttentionSpec,
++    QwenMTPPagedState,
++)
+ 
+ if TYPE_CHECKING:
+     from vllm_metal.v1.model_runner import MetalModelRunner
+@@ -321,6 +325,65 @@ class ModelCachePolicy:
+             and any(window < 0 for window in sliding_windows)
+         )
+ 
++    def _qwen_mtp_metadata(
++        self,
++    ) -> tuple[object, int, int, int, int] | None:
++        spec = self._runner.vllm_config.speculative_config
++        if spec is None or spec.method != "mtp":
++            return None
++        model = self._runner._forward_model
++        if not bool(getattr(model, "supports_mtp", False)):
++            raise ValueError(
++                "method='mtp' was configured but the loaded Qwen checkpoint "
++                "does not contain native MTP weights"
++            )
++        mtp = getattr(model, "mtp", None)
++        args = getattr(model, "args", None)
++        layers = list(getattr(mtp, "layers", ()))
++        if mtp is None or args is None or not layers:
++            raise ValueError("native Qwen MTP requires model.mtp.layers and model.args")
++        try:
++            num_kv_heads = int(args.num_key_value_heads)
++            head_dim = int(args.head_dim)
++            hidden_size = int(args.hidden_size)
++        except (AttributeError, TypeError, ValueError) as exc:
++            raise ValueError(
++                "native Qwen MTP model metadata is missing KV/head dimensions"
++            ) from exc
++        return model, len(layers), num_kv_heads, head_dim, hidden_size
++
++    def qwen_mtp_aux_bytes_per_block(self) -> int:
++        metadata = self._qwen_mtp_metadata()
++        if metadata is None:
++            return 0
++        _, num_layers, num_kv_heads, head_dim, hidden_size = metadata
++        block_size = self._runner.cache_config.block_size
++        dtype_size = self._require_kv_cache_dtype().size
++        mtp_kv = num_layers * 2 * block_size * num_kv_heads * head_dim * dtype_size
++        # EAGLE recomputes one full hash unit on a warm hit. Only the hidden
++        # checkpoint at the end of each retained target block is durable.
++        boundary_hidden = hidden_size * dtype_size + 1
++        return mtp_kv + boundary_hidden
++
++    def _build_qwen_mtp_state(self) -> QwenMTPPagedState | None:
++        metadata = self._qwen_mtp_metadata()
++        if metadata is None:
++            return None
++        if self._use_turboquant(get_config()):
++            raise NotImplementedError(
++                "native Qwen MTP paged KV currently requires dense KV cache; "
++                "disable TurboQuant KV while using method='mtp'"
++            )
++        model, num_layers, num_kv_heads, head_dim, hidden_size = metadata
++        return QwenMTPPagedState(
++            model=model,
++            num_layers=num_layers,
++            num_kv_heads=num_kv_heads,
++            head_dim=head_dim,
++            hidden_size=hidden_size,
++            dtype=self._require_kv_cache_dtype(),
++        )
++
+     def get_kv_cache_spec(self) -> dict[str, KVCacheSpec]:
+         """Build the scheduler-visible KV cache specification."""
+         pooling_backend = self._runner._pooling_backend
+@@ -368,6 +431,7 @@ class ModelCachePolicy:
+                     page_size_padded=cache_config.mamba_page_size_padded,
+                     mamba_block_size=mamba_block_size,
+                     mamba_cache_mode=cache_config.mamba_cache_mode,
++                    num_speculative_blocks=self._num_speculative_blocks(),
+                 )
+             elif use_turboquant:
+                 layer_name = f"layers.{layer_idx}.self_attn"
+@@ -409,6 +473,43 @@ class ModelCachePolicy:
+                         dtype=torch_dtype,
+                     )
+ 
++        metadata = self._qwen_mtp_metadata()
++        if metadata is not None:
++            if use_turboquant:
++                raise NotImplementedError(
++                    "native Qwen MTP paged KV does not support TurboQuant KV"
++                )
++            _, num_mtp_layers, mtp_kv_heads, mtp_head_dim, _ = metadata
++            mtp_spec = QwenMTPAttentionSpec(
++                block_size=block_size,
++                # HiddenStateCacheSpec reports one latent tensor. Doubling the
++                # logical head slots makes its page bytes equal the physical
++                # dense K+V arrays owned by MetalPagedKVCache.
++                num_kv_heads=2 * mtp_kv_heads,
++                head_size=mtp_head_dim,
++                dtype=torch_dtype,
++            )
++            target_page = FullAttentionSpec(
++                block_size=block_size,
++                num_kv_heads=self._runner.num_kv_heads,
++                head_size=self._runner.head_dim,
++                dtype=torch_dtype,
++            ).page_size_bytes
++            if mtp_spec.page_size_bytes != target_page:
++                raise NotImplementedError(
++                    "native Qwen MTP requires its KV page size to match the "
++                    "target full-attention page size"
++                )
++            # HiddenStateCacheSpec is vLLM's cache-only grouping path. Put the
++            # custom distinct subtype first so the early uniformity probe sees
++            # its own registered base, fails closed, and reaches cache-only
++            # extraction without reducing every target/GDN group to size one.
++            mtp_specs = {
++                f"mtp.layers.{layer_idx}.self_attn": mtp_spec
++                for layer_idx in range(num_mtp_layers)
++            }
++            specs = {**mtp_specs, **specs}
++
+         return specs
+ 
+     def _build_mha_attention_spec(
+@@ -573,6 +674,37 @@ class ModelCachePolicy:
+         block_size = kv_cache_config.kv_cache_groups[
+             group_index
+         ].kv_cache_spec.block_size
++
++        mtp_group_index: int | None = None
++        mtp_block_size: int | None = None
++        metadata = self._qwen_mtp_metadata()
++        if metadata is not None:
++            _, num_mtp_layers, _, _, _ = metadata
++            mtp_names = tuple(
++                f"mtp.layers.{layer_idx}.self_attn"
++                for layer_idx in range(num_mtp_layers)
++            )
++            mtp_group_indices = self._scheduler_group_indices_for_layers(
++                kv_cache_config,
++                mtp_names,
++            )
++            if len(mtp_group_indices) != 1:
++                raise RuntimeError(
++                    "native Qwen MTP layers must share one scheduler cache group"
++                )
++            mtp_group_index = mtp_group_indices[0]
++            if mtp_group_index == group_index:
++                raise RuntimeError(
++                    "native Qwen MTP cache was incorrectly merged into the "
++                    "target SDPA scheduler group"
++                )
++            # vLLM treats method='mtp' as EAGLE. When no group is explicitly
++            # annotated, KVCacheCoordinator conservatively applies the lookahead
++            # drop to every group, preserving one shared prefix lineage across
++            # target SDPA, GDN, and this cache-only MTP group.
++            mtp_group = kv_cache_config.kv_cache_groups[mtp_group_index]
++            mtp_block_size = mtp_group.kv_cache_spec.block_size
++
+         # Align mode keys GDN state slabs by scheduler block id.  The engine
+         # stripes same-spec linear layers across several mamba cache groups
+         # (each group hands every request one block-table row), so the runtime
+@@ -656,6 +788,8 @@ class ModelCachePolicy:
+             state_group_indices=state_group_indices,
+             layer_group_ordinals=layer_group_ordinals,
+             layer_pool_ordinals=layer_pool_ordinals,
++            mtp_group_index=mtp_group_index,
++            mtp_block_size=mtp_block_size,
+         )
+         self._runner.install_paged_attention_runtime(runtime, block_size=block_size)
+ 
+@@ -796,13 +930,13 @@ class ModelCachePolicy:
+         MambaSpec carries ``mamba_page_size_padded`` — an unpadded estimate
+         falls short of that requirement by the padding margin.
+         """
+-        # Mirrors MambaSpec.max_memory_usage_bytes with zero speculative
+-        # blocks and mamba_cache_mode "none"; if vLLM's defaults change,
+-        # this mirror must follow.
++        # Mirrors MambaSpec.max_memory_usage_bytes in mamba_cache_mode
++        # "none": one live state plus one snapshot per speculative token.
++        multiplier = 1 + self._num_speculative_blocks()
+         padded = self._runner.cache_config.mamba_page_size_padded
+         if padded is not None:
+-            return self._runner.num_linear_layers * padded
+-        return self.linear_cache_bytes_per_slot()
++            return self._runner.num_linear_layers * padded * multiplier
++        return self.linear_cache_bytes_per_slot() * multiplier
+ 
+     def _build_hybrid_backend(self, block_size: int) -> HybridPagedAttentionRuntime:
+         config = get_config()
+@@ -820,6 +954,8 @@ class ModelCachePolicy:
+             block_size=block_size,
+             dtype=self._require_kv_cache_dtype(),
+             mamba_cache_mode=self._runner.cache_config.mamba_cache_mode,
++            num_speculative_blocks=self._num_speculative_blocks(),
++            qwen_mtp_state=self._build_qwen_mtp_state(),
+             turboquant=config.turboquant,
+             k_quant=config.k_quant if config.turboquant else None,
+             v_quant=config.v_quant if config.turboquant else None,
+@@ -943,6 +1079,12 @@ class ModelCachePolicy:
+         )
+         return num_cache_layers, cache_idx_map
+ 
++    def _num_speculative_blocks(self) -> int:
++        speculative_config = self._runner.vllm_config.speculative_config
++        if speculative_config is None:
++            return 0
++        return int(speculative_config.num_speculative_tokens or 0)
++
+     def _require_kv_cache_dtype(self) -> mx.Dtype:
+         if self._runner.kv_cache_dtype is None:
+             raise RuntimeError("KV cache dtype not initialized; load_model() first")
+@@ -1092,6 +1234,11 @@ class WorkerCachePlanner:
+         # replacement materializes, so budget that one-pool overlap too.
+         per_block_bytes += self._hybrid_align_state_bytes_per_block()
+         per_block_bytes += self._hybrid_align_growth_bytes_per_block()
++        # The MTP cache group shares vLLM's logical block pool, but Metal owns
++        # separate physical arrays for its KV and the target-boundary shadow.
++        # Reserve those bytes in the worker plan so the scheduler round-trips
++        # the same safe block count.
++        per_block_bytes += self._qwen_mtp_aux_bytes_per_block()
+         usable_metal = int(metal_limit * fraction)
+         base_kv_budget = self.base_kv_budget_bytes(
+             metal_limit,
+@@ -1181,6 +1328,22 @@ class WorkerCachePlanner:
+             max_num_seqs=max_num_seqs,
+         )
+ 
++    def _qwen_mtp_aux_bytes_per_block(self) -> int:
++        """Return optional native-Qwen MTP cache bytes for one block."""
++        reporter = getattr(
++            self._worker.model_runner,
++            "qwen_mtp_aux_bytes_per_block",
++            None,
++        )
++        if not callable(reporter):
++            return 0
++        aux_bytes = int(reporter())
++        if aux_bytes < 0:
++            raise ValueError(
++                "Qwen MTP auxiliary cache bytes per block cannot be negative"
++            )
++        return aux_bytes
++
+     def _memory_fraction(self) -> float:
+         """Resolve the paged KV memory fraction.
+ 
+diff --git a/vllm_metal/v1/model_adapter.py b/vllm_metal/v1/model_adapter.py
+index d43de3c..85ae063 100644
+--- a/vllm_metal/v1/model_adapter.py
++++ b/vllm_metal/v1/model_adapter.py
+@@ -419,6 +419,23 @@ validate_paged_attention_support` only when ``kv_heads_per_layer`` has
+                 hidden_states=None,
+             )
+ 
++        # Hardened mlx-lm Qwen native-MTP models expose an explicit
++        # return_hidden contract: logits have already passed through the final
++        # RMSNorm, while the hidden state is the pre-final-norm value the vendor
++        # MTP head was trained to consume.
++        if bool(getattr(model, "supports_mtp", False)):
++            output = model(input_ids, cache=cache, return_hidden=True)
++            if not isinstance(output, tuple) or len(output) != 2:
++                raise RuntimeError(
++                    "supports_mtp model must return (logits, hidden_states) "
++                    "when return_hidden=True"
++                )
++            logits, hidden_states = output
++            return TargetModelForwardOutput(
++                logits=self.extract_logits(logits),
++                hidden_states=self._flatten_target_hidden_states(hidden_states),
++            )
++
+         hidden_states = self._forward_target_hidden_states(
+             model,
+             input_ids,
+diff --git a/vllm_metal/v1/model_runner.py b/vllm_metal/v1/model_runner.py
+index 7551a3d..2c18a5b 100644
+--- a/vllm_metal/v1/model_runner.py
++++ b/vllm_metal/v1/model_runner.py
+@@ -108,6 +108,7 @@ from vllm_metal.v1.proposer import (
+     Gemma4MTPProposer,
+     MetalProposer,
+     ProposeContext,
++    QwenNativeMTPProposer,
+ )
+ from vllm_metal.v1.sampling_batch import (
+     GREEDY_TEMPERATURE_EPS,
+@@ -469,6 +470,16 @@ class MetalModelRunner:
+         max_head_dim = (
+             max(head_dims) if head_dims else self.model_config.get_head_size()
+         )
++        runtime = self._paged_attention_runtime
++        if (
++            self.is_hybrid
++            and runtime is not None
++            and callable(getattr(runtime, "supports_hybrid_speculative_decode", None))
++            and runtime.supports_hybrid_speculative_decode()
++        ):
++            # The phase-2 GDN wrapper requires one segment per request so it
++            # can emit a recurrent/conv checkpoint after every verify token.
++            return True
+         return (
+             envs.VLLM_METAL_SPEC_VERIFY_WINDOW
+             and not self.is_mla
+@@ -748,6 +759,10 @@ class MetalModelRunner:
+         """
+         return self._cache_policy.get_cache_block_size_bytes()
+ 
++    def qwen_mtp_aux_bytes_per_block(self) -> int:
++        """Return native-Qwen MTP KV and boundary-hidden bytes per block."""
++        return self._cache_policy.qwen_mtp_aux_bytes_per_block()
++
+     def linear_cache_bytes_per_slot(self) -> int:
+         """Bytes for one request's linear attention state across all GDN layers."""
+         return self._cache_policy.linear_cache_bytes_per_slot()
+@@ -870,6 +885,8 @@ class MetalModelRunner:
+             return
+         if Gemma4MTPAssistantSource.is_gemma4_mtp(spec):
+             self._drafter = Gemma4MTPProposer(self)
++        elif spec.method == "mtp":
++            self._drafter = QwenNativeMTPProposer(self)
+         elif spec.uses_draft_model():
+             from vllm_metal.v1.draft_model_proposer import DraftModelProposer
+ 
+@@ -903,7 +920,7 @@ class MetalModelRunner:
+         else:
+             raise NotImplementedError(
+                 f"Speculative method {spec.method!r} is not supported on Metal "
+-                "(supported: Gemma4 MTP, draft_model, ngram)."
++                "(supported: Gemma4/Qwen native MTP, draft_model, ngram)."
+             )
+ 
+     def estimate_one_sequence_kv_bytes(
+@@ -1342,6 +1359,14 @@ class MetalModelRunner:
+                     logits = target_output.logits
+                     target_hidden_states = target_output.hidden_states
+                     del target_output
++
++            if (
++                ctx is not None
++                and runtime is not None
++                and target_hidden_states is not None
++                and bool(getattr(runtime, "qwen_mtp_ready", False))
++            ):
++                runtime.store_qwen_mtp_target_hidden(ctx, target_hidden_states)
+         finally:
+             clear_context()
+ 
+@@ -1650,6 +1675,16 @@ class MetalModelRunner:
+             vocab_size=vocab_size,
+         )
+ 
++        # The target forward has now produced one GDN checkpoint per
++        # verification input token, and the verifier has chosen how many output
++        # tokens to commit. Promote the matching scheduler-owned recurrent state
++        # before request lengths or block ownership advance.
++        self._commit_hybrid_speculative_state(
++            decode_reqs=decode_reqs,
++            decode_segments=decode_segments,
++            decode_token_ids=decode_token_ids,
++        )
++
+         # ---- update decode state ----
+         for i, (req_id, state) in enumerate(decode_reqs):
+             sampled_ids = decode_token_ids[i]
+@@ -1837,6 +1872,81 @@ class MetalModelRunner:
+                 decode_reqs.append((req_id, state))
+         return tuple(decode_reqs)
+ 
++    def _commit_hybrid_speculative_state(
++        self,
++        *,
++        decode_reqs: list[tuple[str, RequestState]],
++        decode_segments: tuple[PagedDecodeSegment, ...],
++        decode_token_ids: list[list[int]],
++    ) -> None:
++        """Promote verifier-selected state in an align-mode hybrid runtime.
++
++        ``decode_token_ids[i]`` contains the verifier's emitted sequence for
++        request ``i``. Its length is the universal recurrent-state selector:
++        state snapshot ``len(sampled_ids) - 1``.
++        """
++        runtime = self._paged_attention_runtime
++        if runtime is None or not self.is_hybrid:
++            return
++        if not any(segment.draft_token_ids for segment in decode_segments):
++            return
++        if self.cache_config.mamba_cache_mode != "align":
++            raise RuntimeError(
++                "hybrid speculative state promotion requires mamba_cache_mode='align'"
++            )
++        if not (len(decode_reqs) == len(decode_segments) == len(decode_token_ids)):
++            raise RuntimeError("decode speculation metadata length mismatch")
++
++        req_ids: list[str] = []
++        state_block_ids: list[list[list[int]]] = []
++        step_positions: list[tuple[int, int]] = []
++        num_sampled_tokens: list[int] = []
++        for (req_id, _), segment, sampled_ids in zip(
++            decode_reqs, decode_segments, decode_token_ids, strict=True
++        ):
++            if not segment.draft_token_ids:
++                continue
++            if req_id != segment.req_id:
++                raise RuntimeError(
++                    "hybrid speculative state promotion received mismatched "
++                    f"request metadata: {req_id!r} != {segment.req_id!r}"
++                )
++            sampled = len(sampled_ids)
++            if sampled < 1 or sampled > segment.num_query_tokens:
++                raise RuntimeError(
++                    f"request {req_id!r} emitted {sampled} tokens for a "
++                    f"{segment.num_query_tokens}-token verification window"
++                )
++            try:
++                request_state_blocks = self._state_block_ids_by_req[req_id]
++            except KeyError as exc:
++                raise RuntimeError(
++                    f"no scheduler-owned GDN block table for {req_id!r}"
++                ) from exc
++
++            req_ids.append(req_id)
++            state_block_ids.append(request_state_blocks)
++            step_positions.append((segment.cache_start_pos, segment.num_query_tokens))
++            num_sampled_tokens.append(sampled)
++
++        if not req_ids:
++            return
++
++        commit = getattr(runtime, "commit_speculative_state", None)
++        if commit is None:
++            raise RuntimeError(
++                "hybrid runtime does not implement speculative GDN state promotion"
++            )
++        commit(
++            req_ids=req_ids,
++            state_block_ids=state_block_ids,
++            step_positions=step_positions,
++            num_sampled_tokens=num_sampled_tokens,
++        )
++        # The promotion copy is a lazy MLX state mutation. Materialize it before
++        # the scheduler can reuse, evict, preempt, or copy those blocks.
++        runtime.materialize_pending_state()
++
+     def _validate_spec_decode_supported(
+         self,
+         scheduler_output: SchedulerOutput,
+@@ -1848,6 +1958,17 @@ class MetalModelRunner:
+             is_hybrid=self.is_hybrid,
+             use_async_scheduling=self.use_async_scheduling,
+             speculative_config=self.vllm_config.speculative_config,
++            hybrid_speculative_ready=(
++                self._paged_attention_runtime is not None
++                and callable(
++                    getattr(
++                        self._paged_attention_runtime,
++                        "supports_hybrid_speculative_decode",
++                        None,
++                    )
++                )
++                and self._paged_attention_runtime.supports_hybrid_speculative_decode()
++            ),
+         )
+ 
+     def _run_vision_encoders(
+diff --git a/vllm_metal/v1/proposer.py b/vllm_metal/v1/proposer.py
+index 63022d9..9614fd6 100644
+--- a/vllm_metal/v1/proposer.py
++++ b/vllm_metal/v1/proposer.py
+@@ -155,3 +155,271 @@ class Gemma4MTPProposer:
+             req_ids=[seed.req_id for seed in seeds],
+             draft_token_ids=draft_token_ids,
+         )
++
++
++@dataclass(slots=True)
++class _QwenMTPRequestState:
++    pending_hidden: mx.array | None
++    next_mtp_position: int
++
++
++class QwenNativeMTPProposer:
++    """One-token native Qwen MTP proposer backed by scheduler-owned KV.
++
++    The target hybrid runtime owns both the MTP-head paged KV and a target
++    boundary-hidden shadow. A new request may therefore adopt a scheduler
++    prefix hit without creating a fresh request-local MTP cache.
++
++    vLLM's EAGLE cache group drops one hash unit from a warm hit, so the target
++    recomputes a non-empty suffix. The retained MTP cache is valid through the
++    recompute boundary; drafting resumes *at* ``prefill.start_pos`` rather than
++    overwriting the retained shared tail at ``start_pos - 1``.
++    """
++
++    def __init__(self, runner: MetalModelRunner) -> None:
++        self._runner = runner
++        spec = runner.vllm_config.speculative_config
++        if spec is None or spec.method != "mtp":
++            raise ValueError("QwenNativeMTPProposer requires method='mtp'")
++        width = int(spec.num_speculative_tokens or 0)
++        if width != 1:
++            raise ValueError(
++                "Qwen native MTP on Metal currently supports exactly one "
++                f"speculative token; got {width}."
++            )
++        model = runner._forward_model
++        if not bool(getattr(model, "supports_mtp", False)):
++            raise ValueError(
++                "method='mtp' requires native MTP weights and supports_mtp=True"
++            )
++        if not callable(getattr(model, "mtp_forward", None)):
++            raise ValueError("native MTP model must expose mtp_forward()")
++        self._states: dict[str, _QwenMTPRequestState] = {}
++        self._prefix_hit_blocked: set[str] = set()
++
++    def needs_target_hidden_states(
++        self,
++        decode_segments: Sequence[PagedDecodeSegment],
++        *,
++        has_final_prefill: bool,
++    ) -> bool:
++        del decode_segments, has_final_prefill
++        # Intermediate chunks populate both the MTP KV and the reusable
++        # boundary-hidden shadow, so every Qwen MTP target forward retains them.
++        return True
++
++    def release_requests(self, req_ids: set[str]) -> None:
++        for req_id in req_ids:
++            self._states.pop(req_id, None)
++            self._prefix_hit_blocked.discard(req_id)
++
++    def _runtime(self):
++        runtime = self._runner._paged_attention_runtime
++        if runtime is None or not bool(getattr(runtime, "qwen_mtp_ready", False)):
++            raise RuntimeError(
++                "native Qwen MTP requires the scheduler-owned paged MTP runtime"
++            )
++        return runtime
++
++    def _new_state(self, prefill) -> _QwenMTPRequestState | None:
++        if prefill.start_pos == 0:
++            return _QwenMTPRequestState(
++                pending_hidden=None,
++                next_mtp_position=0,
++            )
++        try:
++            # Validate that the target prefix's durable boundary metadata exists
++            # in the same scheduler-owned block lineage. EAGLE has already
++            # dropped one hash unit, so the MTP KV itself resumes at start_pos.
++            self._runtime().qwen_mtp_boundary_hidden(
++                prefill.block_ids,
++                prefill.start_pos - 1,
++            )
++        except RuntimeError:
++            # Correctness-preserving fallback: target generation continues but
++            # this request drafts nothing. Never combine the restored target
++            # prefix with a fresh or incomplete MTP cache.
++            self._prefix_hit_blocked.add(prefill.req_id)
++            return None
++        return _QwenMTPRequestState(
++            pending_hidden=None,
++            next_mtp_position=prefill.start_pos,
++        )
++
++    def _run_pairs(
++        self,
++        state: _QwenMTPRequestState,
++        hidden_rows: mx.array,
++        next_token_ids: Sequence[int],
++        block_ids_by_group: Sequence[Sequence[int]],
++        *,
++        start_pos: int,
++    ) -> int:
++        if hidden_rows.shape[0] != len(next_token_ids):
++            raise RuntimeError(
++                "Qwen MTP hidden/token pair count mismatch: "
++                f"{hidden_rows.shape[0]} != {len(next_token_ids)}"
++            )
++        if state.next_mtp_position != start_pos:
++            raise RuntimeError(
++                "Qwen MTP logical position mismatch: "
++                f"cache expects {state.next_mtp_position}, caller supplied {start_pos}"
++            )
++        draft = self._runtime().qwen_mtp_run_pairs(
++            hidden_rows=hidden_rows,
++            next_token_ids=next_token_ids,
++            block_ids_by_group=block_ids_by_group,
++            start_pos=start_pos,
++        )
++        state.next_mtp_position += len(next_token_ids)
++        return draft
++
++    def _advance_prefill(
++        self,
++        state: _QwenMTPRequestState,
++        hidden_rows: mx.array,
++        input_token_ids: Sequence[int],
++        block_ids_by_group: Sequence[Sequence[int]],
++    ) -> None:
++        if hidden_rows.shape[0] != len(input_token_ids):
++            raise RuntimeError("Qwen MTP prefill hidden/token length mismatch")
++        if not input_token_ids:
++            return
++        pair_hidden: list[mx.array] = []
++        pair_tokens: list[int] = []
++        if state.pending_hidden is not None:
++            pair_hidden.append(state.pending_hidden)
++            pair_tokens.append(int(input_token_ids[0]))
++        if len(input_token_ids) > 1:
++            pair_hidden.append(hidden_rows[:-1])
++            pair_tokens.extend(int(token) for token in input_token_ids[1:])
++        if pair_tokens:
++            self._run_pairs(
++                state,
++                mx.concatenate(pair_hidden, axis=0),
++                pair_tokens,
++                block_ids_by_group,
++                start_pos=state.next_mtp_position,
++            )
++        state.pending_hidden = hidden_rows[-1:]
++
++    def _draft_after_prefill_sample(
++        self,
++        state: _QwenMTPRequestState,
++        sampled_token_id: int,
++        block_ids_by_group: Sequence[Sequence[int]],
++    ) -> int:
++        if state.pending_hidden is None:
++            raise RuntimeError("Qwen MTP final prefill has no boundary hidden state")
++        draft = self._run_pairs(
++            state,
++            state.pending_hidden,
++            [sampled_token_id],
++            block_ids_by_group,
++            start_pos=state.next_mtp_position,
++        )
++        state.pending_hidden = None
++        return draft
++
++    def propose(self, ctx: ProposeContext) -> DraftTokenIds | None:
++        if ctx.num_speculative_tokens != 1:
++            raise RuntimeError(
++                "Qwen native MTP proposer received a non-one-token runtime width"
++            )
++        self.release_requests(ctx.finished_req_ids)
++        hidden = ctx.target_hidden_states
++        if hidden is None:
++            return None
++
++        draft_req_ids: list[str] = []
++        drafts: list[list[int]] = []
++
++        for (req_id, state), segment, sampled_ids in zip(
++            ctx.decode_reqs,
++            ctx.decode_segments,
++            ctx.decode_token_ids,
++            strict=True,
++        ):
++            if (
++                not sampled_ids
++                or not self._runner._spec_decode_controller.can_draft_greedy(
++                    req_id, state
++                )
++            ):
++                continue
++            request_state = self._states.get(req_id)
++            if request_state is None or req_id in self._prefix_hit_blocked:
++                continue
++            if request_state.next_mtp_position != segment.cache_start_pos:
++                raise RuntimeError(
++                    f"Qwen MTP request {req_id!r} expected target position "
++                    f"{request_state.next_mtp_position}, got {segment.cache_start_pos}"
++                )
++            count = len(sampled_ids)
++            hidden_rows = hidden[segment.start_row : segment.start_row + count]
++            draft = self._run_pairs(
++                request_state,
++                hidden_rows,
++                sampled_ids,
++                segment.block_ids,
++                start_pos=segment.cache_start_pos,
++            )
++            draft_req_ids.append(req_id)
++            drafts.append([draft])
++
++        for index, (prefill, sampled_token_id, result_mode) in enumerate(
++            zip(
++                ctx.prefill_reqs,
++                ctx.prefill_token_ids,
++                ctx.prefill_result_modes,
++                strict=True,
++            )
++        ):
++            req_id = prefill.req_id
++            request_state = self._states.get(req_id)
++            if request_state is None:
++                request_state = self._new_state(prefill)
++                if request_state is None:
++                    continue
++                self._states[req_id] = request_state
++            if req_id in self._prefix_hit_blocked:
++                continue
++
++            expected_position = prefill.start_pos - int(
++                request_state.pending_hidden is not None
++            )
++            if request_state.next_mtp_position != expected_position:
++                raise RuntimeError(
++                    f"Qwen MTP prefill {req_id!r} expected MTP position "
++                    f"{expected_position}, found {request_state.next_mtp_position}"
++                )
++
++            start = ctx.cu_seqlens[ctx.num_decode_segments + index]
++            end = ctx.cu_seqlens[ctx.num_decode_segments + index + 1]
++            self._advance_prefill(
++                request_state,
++                hidden[start:end],
++                prefill.token_ids,
++                prefill.block_ids,
++            )
++            if result_mode == "intermediate":
++                continue
++            state = ctx.request_states.get(req_id)
++            if (
++                state is None
++                or not self._runner._spec_decode_controller.can_draft_greedy(
++                    req_id, state
++                )
++            ):
++                continue
++            draft = self._draft_after_prefill_sample(
++                request_state,
++                int(sampled_token_id),
++                prefill.block_ids,
++            )
++            draft_req_ids.append(req_id)
++            drafts.append([draft])
++
++        if not drafts:
++            return None
++        return DraftTokenIds(req_ids=draft_req_ids, draft_token_ids=drafts)
+diff --git a/vllm_metal/v1/qwen_mtp_paged.py b/vllm_metal/v1/qwen_mtp_paged.py
+new file mode 100644
+index 0000000..05818fd
+--- /dev/null
++++ b/vllm_metal/v1/qwen_mtp_paged.py
+@@ -0,0 +1,380 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Scheduler-owned cache transaction for native Qwen MTP on Metal.
++
++The target hybrid runtime owns three pieces of speculative state:
++
++* the ordinary target SDPA/GDN state;
++* a dedicated, scheduler-addressed MTP-head KV cache;
++* one target pre-norm hidden-state checkpoint per completed target cache block.
++
++The MTP group is an EAGLE-style cache group and therefore recomputes a full
++hash unit on a reusable prefix hit. The boundary checkpoint shares the target
++block lifecycle and validates that warm-prefix drafting never combines restored
++target state with a fresh or incomplete MTP cache.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++from dataclasses import dataclass
++from typing import Any
++
++import mlx.core as mx
++from vllm.v1.core.single_type_kv_cache_manager import FullAttentionManager
++from vllm.v1.kv_cache_interface import HiddenStateCacheSpec
++from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
++
++from vllm_metal.attention.caches.kv_cache import MetalPagedKVCache
++from vllm_metal.attention.context import (
++    PagedAttentionContext,
++    clear_context,
++    prepare_unified,
++)
++from vllm_metal.attention.impls.sdpa_wrapper import patch_sdpa_attention
++
++
++@dataclass(frozen=True, kw_only=True)
++class QwenMTPAttentionSpec(HiddenStateCacheSpec):
++    """A distinct full-attention cache group for the native Qwen MTP head.
++
++    The cache-only marker makes vLLM pull this layer out before hybrid
++    grouping, so a single MTP layer does not collapse every target/GDN group to
++    size one. ``num_kv_heads`` is reported as combined K+V head slots; the
++    inherited latent-page byte formula therefore equals the physical dense
++    K+V page owned by :class:`MetalPagedKVCache`.
++    """
++
++
++# Initialize the built-in registry first, then register this cache-only
++# subtype as its own uniform base. Cache policy inserts it first in the spec
++# map, so vLLM's early uniformity probe cannot absorb it into target attention.
++KVCacheSpecRegistry._ensure_registered()
++KVCacheSpecRegistry.register(
++    QwenMTPAttentionSpec,
++    FullAttentionManager,
++    uniform_type_base_spec=QwenMTPAttentionSpec,
++)
++
++
++class QwenMTPBoundaryHiddenCache:
++    """One pre-final-norm hidden checkpoint per completed target block.
++
++    Prefix-cache adoption is block-aligned. EAGLE drops one hash unit and
++    recomputes it, so only the hidden state at the end of the retained target
++    block is durable state. Keeping one vector per block avoids multiplying the
++    memory cost by ``block_size`` while retaining an exact, fail-closed lineage
++    check.
++    """
++
++    def __init__(
++        self,
++        *,
++        num_blocks: int,
++        block_size: int,
++        hidden_size: int,
++        dtype: mx.Dtype,
++    ) -> None:
++        if num_blocks <= 0 or block_size <= 0 or hidden_size <= 0:
++            raise ValueError("Qwen MTP boundary cache dimensions must be positive")
++        self.num_blocks = num_blocks
++        self.block_size = block_size
++        self.hidden_size = hidden_size
++        self.dtype = dtype
++        self.cache = mx.zeros((num_blocks, hidden_size), dtype=dtype)
++        self.valid = mx.zeros((num_blocks,), dtype=mx.uint8)
++        mx.eval(self.cache, self.valid)
++
++    @property
++    def bytes_per_block(self) -> int:
++        return self.hidden_size * self.dtype.size + mx.uint8.size
++
++    def store(self, slot_mapping: Sequence[int], hidden_states: mx.array) -> None:
++        hidden_states = hidden_states.reshape(-1, self.hidden_size)
++        if len(slot_mapping) != hidden_states.shape[0]:
++            raise RuntimeError(
++                "Qwen MTP boundary-hidden slot/row mismatch: "
++                f"{len(slot_mapping)} != {hidden_states.shape[0]}"
++            )
++        if not slot_mapping:
++            return
++        if any(slot < 0 for slot in slot_mapping):
++            raise RuntimeError("Qwen MTP boundary cache received a negative slot")
++        max_slot = self.num_blocks * self.block_size
++        if any(slot >= max_slot for slot in slot_mapping):
++            raise RuntimeError("Qwen MTP boundary cache slot is out of range")
++
++        # A write to offset zero begins a new physical block lifetime. Clear a
++        # previous occupant's boundary marker before the block can be cached.
++        clear_blocks = sorted(
++            {
++                slot // self.block_size
++                for slot in slot_mapping
++                if slot % self.block_size == 0
++            }
++        )
++        if clear_blocks:
++            clear_ids = mx.array(clear_blocks, dtype=mx.int32)
++            self.valid[clear_ids] = mx.zeros((len(clear_blocks),), dtype=mx.uint8)
++
++        boundary_rows = [
++            row
++            for row, slot in enumerate(slot_mapping)
++            if slot % self.block_size == self.block_size - 1
++        ]
++        if not boundary_rows:
++            return
++        block_ids = mx.array(
++            [slot_mapping[row] // self.block_size for row in boundary_rows],
++            dtype=mx.int32,
++        )
++        row_ids = mx.array(boundary_rows, dtype=mx.int32)
++        self.cache[block_ids] = hidden_states[row_ids].astype(self.dtype)
++        self.valid[block_ids] = mx.ones((len(boundary_rows),), dtype=mx.uint8)
++
++    def read(self, block_ids: Sequence[int], token_position: int) -> mx.array:
++        if token_position < 0:
++            raise RuntimeError("Qwen MTP boundary token position must be non-negative")
++        if token_position % self.block_size != self.block_size - 1:
++            raise RuntimeError(
++                "Qwen MTP warm-prefix boundary is not target-block aligned"
++            )
++        block_index = token_position // self.block_size
++        if block_index >= len(block_ids):
++            raise RuntimeError(
++                "Qwen MTP target prefix is missing the boundary-hidden block"
++            )
++        block_id = int(block_ids[block_index])
++        if block_id < 0 or block_id >= self.num_blocks:
++            raise RuntimeError("Qwen MTP boundary block id is out of range")
++        valid = self.valid[block_id]
++        mx.eval(valid)
++        if int(valid.item()) != 1:
++            raise RuntimeError(
++                "Qwen MTP target prefix has no valid boundary-hidden checkpoint"
++            )
++        value = self.cache[block_id : block_id + 1]
++        mx.eval(value)
++        return value
++
++    def copy_blocks(self, block_copies: Sequence[tuple[int, int]]) -> None:
++        if not block_copies:
++            return
++        src_ids, dst_ids = zip(*block_copies, strict=True)
++        if any(
++            block_id < 0 or block_id >= self.num_blocks
++            for block_id in (*src_ids, *dst_ids)
++        ):
++            raise RuntimeError(
++                "Qwen MTP boundary cache copy contains an out-of-range block id"
++            )
++        src = mx.array(src_ids, dtype=mx.int32)
++        dst = mx.array(dst_ids, dtype=mx.int32)
++        self.cache[dst] = self.cache[src]
++        self.valid[dst] = self.valid[src]
++
++
++class QwenMTPPagedState:
++    """Dedicated paged MTP KV plus target-boundary hidden-state shadow."""
++
++    def __init__(
++        self,
++        *,
++        model: Any,
++        num_layers: int,
++        num_kv_heads: int,
++        head_dim: int,
++        hidden_size: int,
++        dtype: mx.Dtype,
++    ) -> None:
++        if num_layers <= 0:
++            raise ValueError("native Qwen MTP requires at least one MTP layer")
++        mtp_module = getattr(model, "mtp", None)
++        if mtp_module is None:
++            raise ValueError("native Qwen MTP model does not expose model.mtp")
++        self.model = model
++        self.mtp_module = mtp_module
++        self.num_layers = num_layers
++        self.num_kv_heads = num_kv_heads
++        self.head_dim = head_dim
++        self.hidden_size = hidden_size
++        self.dtype = dtype
++        self.mtp_cache: MetalPagedKVCache | None = None
++        self.boundary_cache: QwenMTPBoundaryHiddenCache | None = None
++        self._target_group_index: int | None = None
++        self._mtp_group_index: int | None = None
++        self._target_block_size: int | None = None
++        self._mtp_block_size: int | None = None
++
++    def initialize(self, *, num_blocks: int, block_size: int) -> None:
++        self.mtp_cache = MetalPagedKVCache(
++            num_layers=self.num_layers,
++            num_kv_heads=self.num_kv_heads,
++            head_dim=self.head_dim,
++            num_blocks=num_blocks,
++            block_size=block_size,
++            dtype=self.dtype,
++        )
++        self.boundary_cache = QwenMTPBoundaryHiddenCache(
++            num_blocks=num_blocks,
++            block_size=block_size,
++            hidden_size=self.hidden_size,
++            dtype=self.dtype,
++        )
++        patched = patch_sdpa_attention(
++            self.mtp_module,
++            self.mtp_cache,
++            block_size,
++        )
++        if patched != self.num_layers:
++            raise RuntimeError(
++                "Qwen MTP paged runtime patched "
++                f"{patched} attention layers, expected {self.num_layers}"
++            )
++
++    def configure_groups(
++        self,
++        *,
++        target_group_index: int,
++        mtp_group_index: int,
++        target_block_size: int,
++        mtp_block_size: int,
++    ) -> None:
++        if target_group_index == mtp_group_index:
++            raise RuntimeError("Qwen MTP KV must use a distinct scheduler group")
++        if target_block_size != mtp_block_size:
++            raise NotImplementedError(
++                "Qwen MTP currently requires target and MTP groups to use the "
++                "same block size"
++            )
++        cache = self._require_mtp_cache()
++        boundary = self._require_boundary_cache()
++        if (
++            cache.block_size != mtp_block_size
++            or boundary.block_size != target_block_size
++        ):
++            raise RuntimeError("Qwen MTP scheduler block size changed after allocation")
++        self._target_group_index = target_group_index
++        self._mtp_group_index = mtp_group_index
++        self._target_block_size = target_block_size
++        self._mtp_block_size = mtp_block_size
++
++    @property
++    def ready(self) -> bool:
++        return (
++            self.mtp_cache is not None
++            and self.boundary_cache is not None
++            and self._target_group_index is not None
++            and self._mtp_group_index is not None
++        )
++
++    @property
++    def scheduler_group_indices(self) -> tuple[int, int]:
++        self._require_ready()
++        assert self._target_group_index is not None
++        assert self._mtp_group_index is not None
++        return self._target_group_index, self._mtp_group_index
++
++    @property
++    def group_block_sizes(self) -> tuple[int, int]:
++        self._require_ready()
++        assert self._target_block_size is not None
++        assert self._mtp_block_size is not None
++        return self._target_block_size, self._mtp_block_size
++
++    @property
++    def mtp_group_ordinal(self) -> int:
++        # ``HybridPagedAttentionRuntime`` always publishes target first.
++        self._require_ready()
++        return 1
++
++    def store_target_hidden(
++        self,
++        ctx: PagedAttentionContext,
++        hidden_states: mx.array,
++    ) -> None:
++        self._require_ready()
++        if ctx.kv_groups is None or not ctx.kv_groups:
++            slot_mapping = ctx.slot_mapping
++        else:
++            # Runtime-local group zero is the target SDPA group.
++            slot_mapping = ctx.kv_groups[0].slot_mapping
++        self._require_boundary_cache().store(slot_mapping, hidden_states)
++
++    def read_boundary_hidden(
++        self,
++        block_ids_by_group: Sequence[Sequence[int]],
++        token_position: int,
++    ) -> mx.array:
++        self._require_ready()
++        if not block_ids_by_group:
++            raise RuntimeError("Qwen MTP request has no target scheduler blocks")
++        return self._require_boundary_cache().read(
++            block_ids_by_group[0],
++            token_position,
++        )
++
++    def run_pairs(
++        self,
++        *,
++        hidden_rows: mx.array,
++        next_token_ids: Sequence[int],
++        block_ids_by_group: Sequence[Sequence[int]],
++        start_pos: int,
++    ) -> int:
++        self._require_ready()
++        if hidden_rows.shape[0] != len(next_token_ids):
++            raise RuntimeError(
++                "Qwen MTP hidden/token pair count mismatch: "
++                f"{hidden_rows.shape[0]} != {len(next_token_ids)}"
++            )
++        if not next_token_ids:
++            raise RuntimeError("Qwen MTP forward requires at least one pair")
++        ordinal = self.mtp_group_ordinal
++        if ordinal >= len(block_ids_by_group):
++            raise RuntimeError("Qwen MTP request is missing its scheduler KV group")
++        mtp_blocks = list(block_ids_by_group[ordinal])
++        assert self._mtp_block_size is not None
++        last_pos = start_pos + len(next_token_ids) - 1
++        if last_pos // self._mtp_block_size >= len(mtp_blocks):
++            raise RuntimeError("Qwen MTP scheduler block table is too short")
++
++        prepare_unified(
++            decode_requests=[],
++            prefill_requests=[(mtp_blocks, len(next_token_ids), start_pos)],
++            block_size=self._mtp_block_size,
++        )
++        cache = self._require_mtp_cache()
++        try:
++            logits = self.model.mtp_forward(
++                hidden_rows[None],
++                mx.array([list(next_token_ids)], dtype=mx.uint32),
++                [None] * self.num_layers,
++            )
++            mx.eval(logits, *cache.key_caches, *cache.value_caches)
++        finally:
++            clear_context()
++        return int(mx.argmax(logits[0, -1], axis=-1).item())
++
++    def copy_blocks(self, block_copies: Sequence[tuple[int, int]]) -> None:
++        if not self.ready:
++            return
++        self._require_mtp_cache().copy_blocks(block_copies)
++        self._require_boundary_cache().copy_blocks(block_copies)
++
++    def extend_forward_eval_outputs(self, outputs: list[mx.array]) -> None:
++        if self.boundary_cache is not None:
++            outputs.extend([self.boundary_cache.cache, self.boundary_cache.valid])
++
++    def _require_ready(self) -> None:
++        if not self.ready:
++            raise RuntimeError("Qwen MTP paged state is not scheduler-configured")
++
++    def _require_mtp_cache(self) -> MetalPagedKVCache:
++        if self.mtp_cache is None:
++            raise RuntimeError("Qwen MTP paged KV accessed before initialize()")
++        return self.mtp_cache
++
++    def _require_boundary_cache(self) -> QwenMTPBoundaryHiddenCache:
++        if self.boundary_cache is None:
++            raise RuntimeError("Qwen MTP boundary cache accessed before initialize()")
++        return self.boundary_cache
+diff --git a/vllm_metal/v1/spec_decode.py b/vllm_metal/v1/spec_decode.py
+index ef1bcde..a988cb8 100644
+--- a/vllm_metal/v1/spec_decode.py
++++ b/vllm_metal/v1/spec_decode.py
+@@ -120,6 +120,7 @@ class SpeculativeDecodeController:
+         is_hybrid: bool,
+         use_async_scheduling: bool = False,
+         speculative_config: SpeculativeConfig | None = None,
++        hybrid_speculative_ready: bool = False,
+     ) -> None:
+         """Fail fast for unsupported or inconsistent scheduler handoffs."""
+         # All three Metal proposers (draft-model, MTP, n-gram) hand drafts
+@@ -150,10 +151,14 @@ class SpeculativeDecodeController:
+                 "attention so draft-token rows can share scheduler-assigned "
+                 "KV slots."
+             )
+-        if (active_spec_tokens or has_invalid_spec_tokens) and is_hybrid:
++        if (
++            (active_spec_tokens or has_invalid_spec_tokens)
++            and is_hybrid
++            and not hybrid_speculative_ready
++        ):
+             raise NotImplementedError(
+-                "Speculative decode verification is not supported for hybrid "
+-                "GDN models on Metal yet."
++                "Speculative decode verification for hybrid GDN models requires "
++                "the transactional paged Qwen MTP runtime."
+             )
+ 
+         decode_req_ids = {req_id for req_id, _ in decode_reqs}

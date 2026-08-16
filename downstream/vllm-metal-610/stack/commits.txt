@@ -1,0 +1,5 @@
+fe50d5c8b43e29402fd786e0ebf5d249296fff72 feat: plan scheduler-owned speculative GDN state
+fae87656076cb6ba1e9242d77c88e3f17327803e feat: snapshot GDN state after each verify token
+08f03322e00a32cf201199d0287fcf5d4af86410 feat: commit the verifier-selected GDN checkpoint
+1602240c1a62d4bae7b059aa69daefea3c83fc34 feat: add the trained native Qwen MTP proposer
+c4df7f48b177365e55ebf012502582985c5da9cf feat: cache native Qwen MTP state with hybrid prefixes

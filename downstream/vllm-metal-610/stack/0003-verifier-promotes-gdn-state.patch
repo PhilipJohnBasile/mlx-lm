@@ -1,0 +1,211 @@
+From 08f03322e00a32cf201199d0287fcf5d4af86410 Mon Sep 17 00:00:00 2001
+From: Philip John Basile <PBasile@Basilecom.com>
+Date: Sun, 16 Aug 2026 06:52:57 +0000
+Subject: [PATCH] feat: commit the verifier-selected GDN checkpoint
+
+---
+ tests/test_v1_model_runner_generate.py | 80 ++++++++++++++++++++++++
+ vllm_metal/v1/model_runner.py          | 85 ++++++++++++++++++++++++++
+ 2 files changed, 165 insertions(+)
+
+diff --git a/tests/test_v1_model_runner_generate.py b/tests/test_v1_model_runner_generate.py
+index 2c683e0..06103a3 100644
+--- a/tests/test_v1_model_runner_generate.py
++++ b/tests/test_v1_model_runner_generate.py
+@@ -81,6 +81,18 @@ class ForwardOutputRuntimeStub:
+         return None
+ 
+ 
++class SpeculativeCommitRuntimeStub:
++    def __init__(self) -> None:
++        self.calls: list[dict[str, object]] = []
++        self.materialize_calls = 0
++
++    def commit_speculative_state(self, **kwargs) -> None:
++        self.calls.append(kwargs)
++
++    def materialize_pending_state(self) -> None:
++        self.materialize_calls += 1
++
++
+ class PoolingForwardBackendStub:
+     def __init__(self, hidden_states: mx.array) -> None:
+         self.hidden_states = hidden_states
+@@ -136,6 +148,74 @@ class TestDrafterReleaseOnLifecycle:
+         assert released == [{"done", "paused", "back"}]
+ 
+ 
++class TestHybridSpeculativeStatePromotion:
++    @staticmethod
++    def _segment(
++        req_id: str,
++        *,
++        start_row: int,
++        cache_start_pos: int,
++        drafts: tuple[int, ...],
++    ) -> PagedDecodeSegment:
++        return PagedDecodeSegment(
++            req_id=req_id,
++            input_token_ids=(9, *drafts),
++            start_row=start_row,
++            num_query_tokens=1 + len(drafts),
++            draft_token_ids=drafts,
++            cache_start_pos=cache_start_pos,
++            block_ids=((2, 3, 6, 7),),
++        )
++
++    def test_commits_only_speculative_requests_with_sampled_lengths(self) -> None:
++        runner = make_stub_runner(tokenizer=object())
++        runner.model_args = {"full_attention_interval": 2}
++        runner.cache_config = SimpleNamespace(mamba_cache_mode="align")
++        runtime = SpeculativeCommitRuntimeStub()
++        runner._paged_attention_runtime = runtime
++        runner._state_block_ids_by_req = {
++            "spec": [[2, 3, 6, 7]],
++            "plain": [[8, 9]],
++        }
++        spec_segment = self._segment(
++            "spec", start_row=0, cache_start_pos=5, drafts=(10, 11)
++        )
++        plain_segment = self._segment(
++            "plain", start_row=3, cache_start_pos=12, drafts=()
++        )
++
++        runner._commit_hybrid_speculative_state(
++            decode_reqs=[("spec", object()), ("plain", object())],
++            decode_segments=(spec_segment, plain_segment),
++            decode_token_ids=[[10, 99], [12]],
++        )
++
++        assert runtime.materialize_calls == 1
++        assert runtime.calls == [
++            {
++                "req_ids": ["spec"],
++                "state_block_ids": [[[2, 3, 6, 7]]],
++                "step_positions": [(5, 3)],
++                "num_sampled_tokens": [2],
++            }
++        ]
++
++    def test_rejects_impossible_verifier_output_length(self) -> None:
++        runner = make_stub_runner(tokenizer=object())
++        runner.model_args = {"full_attention_interval": 2}
++        runner.cache_config = SimpleNamespace(mamba_cache_mode="align")
++        runner._paged_attention_runtime = SpeculativeCommitRuntimeStub()
++        runner._state_block_ids_by_req = {"spec": [[2, 3, 6, 7]]}
++        segment = self._segment("spec", start_row=0, cache_start_pos=5, drafts=(10, 11))
++
++        with pytest.raises(RuntimeError, match="emitted 0 tokens"):
++            runner._commit_hybrid_speculative_state(
++                decode_reqs=[("spec", object())],
++                decode_segments=(segment,),
++                decode_token_ids=[[]],
++            )
++
++
+ class TestV1MetalModelRunnerGenerate:
+     def _make_runner(self) -> mr.MetalModelRunner:
+         return make_stub_runner(tokenizer=object())
+diff --git a/vllm_metal/v1/model_runner.py b/vllm_metal/v1/model_runner.py
+index 7551a3d..9e6e913 100644
+--- a/vllm_metal/v1/model_runner.py
++++ b/vllm_metal/v1/model_runner.py
+@@ -1650,6 +1650,16 @@ class MetalModelRunner:
+             vocab_size=vocab_size,
+         )
+ 
++        # The target forward has now produced one GDN checkpoint per
++        # verification input token, and the verifier has chosen how many output
++        # tokens to commit. Promote the matching scheduler-owned recurrent state
++        # before request lengths or block ownership advance.
++        self._commit_hybrid_speculative_state(
++            decode_reqs=decode_reqs,
++            decode_segments=decode_segments,
++            decode_token_ids=decode_token_ids,
++        )
++
+         # ---- update decode state ----
+         for i, (req_id, state) in enumerate(decode_reqs):
+             sampled_ids = decode_token_ids[i]
+@@ -1837,6 +1847,81 @@ class MetalModelRunner:
+                 decode_reqs.append((req_id, state))
+         return tuple(decode_reqs)
+ 
++    def _commit_hybrid_speculative_state(
++        self,
++        *,
++        decode_reqs: list[tuple[str, RequestState]],
++        decode_segments: tuple[PagedDecodeSegment, ...],
++        decode_token_ids: list[list[int]],
++    ) -> None:
++        """Promote verifier-selected state in an align-mode hybrid runtime.
++
++        ``decode_token_ids[i]`` contains the verifier's emitted sequence for
++        request ``i``. Its length is the universal recurrent-state selector:
++        state snapshot ``len(sampled_ids) - 1``.
++        """
++        runtime = self._paged_attention_runtime
++        if runtime is None or not self.is_hybrid:
++            return
++        if not any(segment.draft_token_ids for segment in decode_segments):
++            return
++        if self.cache_config.mamba_cache_mode != "align":
++            raise RuntimeError(
++                "hybrid speculative state promotion requires mamba_cache_mode='align'"
++            )
++        if not (len(decode_reqs) == len(decode_segments) == len(decode_token_ids)):
++            raise RuntimeError("decode speculation metadata length mismatch")
++
++        req_ids: list[str] = []
++        state_block_ids: list[list[list[int]]] = []
++        step_positions: list[tuple[int, int]] = []
++        num_sampled_tokens: list[int] = []
++        for (req_id, _), segment, sampled_ids in zip(
++            decode_reqs, decode_segments, decode_token_ids, strict=True
++        ):
++            if not segment.draft_token_ids:
++                continue
++            if req_id != segment.req_id:
++                raise RuntimeError(
++                    "hybrid speculative state promotion received mismatched "
++                    f"request metadata: {req_id!r} != {segment.req_id!r}"
++                )
++            sampled = len(sampled_ids)
++            if sampled < 1 or sampled > segment.num_query_tokens:
++                raise RuntimeError(
++                    f"request {req_id!r} emitted {sampled} tokens for a "
++                    f"{segment.num_query_tokens}-token verification window"
++                )
++            try:
++                request_state_blocks = self._state_block_ids_by_req[req_id]
++            except KeyError as exc:
++                raise RuntimeError(
++                    f"no scheduler-owned GDN block table for {req_id!r}"
++                ) from exc
++
++            req_ids.append(req_id)
++            state_block_ids.append(request_state_blocks)
++            step_positions.append((segment.cache_start_pos, segment.num_query_tokens))
++            num_sampled_tokens.append(sampled)
++
++        if not req_ids:
++            return
++
++        commit = getattr(runtime, "commit_speculative_state", None)
++        if commit is None:
++            raise RuntimeError(
++                "hybrid runtime does not implement speculative GDN state promotion"
++            )
++        commit(
++            req_ids=req_ids,
++            state_block_ids=state_block_ids,
++            step_positions=step_positions,
++            num_sampled_tokens=num_sampled_tokens,
++        )
++        # The promotion copy is a lazy MLX state mutation. Materialize it before
++        # the scheduler can reuse, evict, preempt, or copy those blocks.
++        runtime.materialize_pending_state()
++
+     def _validate_spec_decode_supported(
+         self,
+         scheduler_output: SchedulerOutput,

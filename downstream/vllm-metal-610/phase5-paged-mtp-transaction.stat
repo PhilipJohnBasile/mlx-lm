@@ -1,0 +1,18 @@
+ tests/attention/test_align_gdn_state_manager.py | 108 ++++++-
+ tests/test_gdn_lazy_wrapper.py                  |  49 +++
+ tests/test_qwen_mtp_paged_cache.py              | 238 +++++++++++++++
+ tests/test_qwen_mtp_worker_budget.py            |  34 +++
+ tests/test_qwen_native_mtp_proposer.py          | 272 +++++++++++++++++
+ tests/test_v1_model_runner_generate.py          |  80 +++++
+ vllm_metal/attention/context.py                 |   6 +
+ vllm_metal/attention/impls/linear.py            | 135 ++++++++-
+ vllm_metal/attention/runtime/hybrid.py          | 110 ++++++-
+ vllm_metal/attention/state/align.py             | 112 ++++++-
+ vllm_metal/platform.py                          |  26 +-
+ vllm_metal/v1/cache_policy.py                   | 173 ++++++++++-
+ vllm_metal/v1/model_adapter.py                  |  17 ++
+ vllm_metal/v1/model_runner.py                   | 123 +++++++-
+ vllm_metal/v1/proposer.py                       | 268 +++++++++++++++++
+ vllm_metal/v1/qwen_mtp_paged.py                 | 380 ++++++++++++++++++++++++
+ vllm_metal/v1/spec_decode.py                    |  11 +-
+ 17 files changed, 2121 insertions(+), 21 deletions(-)
