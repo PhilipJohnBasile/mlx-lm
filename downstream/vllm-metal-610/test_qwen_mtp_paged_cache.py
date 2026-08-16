@@ -85,48 +85,65 @@ class TestQwenMTPAttentionSpec:
             "layers.3.self_attn",
         ]
         assert mtp_group.layer_names == ["mtp.layers.0.self_attn"]
-        assert target_group.kv_cache_spec.page_size_bytes == mtp_group.kv_cache_spec.page_size_bytes
+        assert (
+            target_group.kv_cache_spec.page_size_bytes
+            == mtp_group.kv_cache_spec.page_size_bytes
+        )
 
 
 class TestQwenMTPBoundaryHiddenCache:
-    def test_store_read_and_copy_follow_target_scheduler_blocks(self) -> None:
+    def test_store_read_copy_and_reuse_follow_target_blocks(self) -> None:
         cache = QwenMTPBoundaryHiddenCache(
             num_blocks=8,
             block_size=4,
             hidden_size=3,
             dtype=mx.float32,
         )
+        assert cache.bytes_per_block == 3 * mx.float32.size + mx.uint8.size
         hidden = mx.array(
             [
                 [10.0, 11.0, 12.0],
                 [20.0, 21.0, 22.0],
                 [30.0, 31.0, 32.0],
+                [40.0, 41.0, 42.0],
             ],
             dtype=mx.float32,
         )
-        # Scheduler slots 9, 10, 11 are block 2 offsets 1, 2, 3.
-        cache.store([9, 10, 11], hidden)
-        mx.eval(cache.cache)
+        # Scheduler slots 8..11 complete block 2. Only its final hidden state
+        # becomes a durable warm-prefix checkpoint.
+        cache.store([8, 9, 10, 11], hidden)
+        mx.eval(cache.cache, cache.valid)
 
-        value = cache.read([0, 1, 2], token_position=10)
-        np.testing.assert_array_equal(np.array(value), [[20.0, 21.0, 22.0]])
+        value = cache.read([0, 1, 2], token_position=11)
+        np.testing.assert_array_equal(np.array(value), [[40.0, 41.0, 42.0]])
 
         cache.copy_blocks([(2, 5)])
-        mx.eval(cache.cache)
-        copied = cache.read([0, 1, 5], token_position=10)
-        np.testing.assert_array_equal(np.array(copied), [[20.0, 21.0, 22.0]])
+        mx.eval(cache.cache, cache.valid)
+        copied = cache.read([0, 1, 5], token_position=11)
+        np.testing.assert_array_equal(np.array(copied), [[40.0, 41.0, 42.0]])
 
-    def test_missing_or_out_of_range_boundary_fails_closed(self) -> None:
+        # Beginning a new lifetime for physical block 5 invalidates the old
+        # occupant's checkpoint until that new block is complete.
+        cache.store([20], mx.array([[90.0, 91.0, 92.0]], dtype=mx.float32))
+        mx.eval(cache.valid)
+        with pytest.raises(RuntimeError, match="no valid boundary-hidden"):
+            cache.read([0, 1, 5], token_position=11)
+
+    def test_missing_unaligned_or_out_of_range_boundary_fails_closed(self) -> None:
         cache = QwenMTPBoundaryHiddenCache(
             num_blocks=2,
             block_size=4,
             hidden_size=2,
             dtype=mx.float16,
         )
+        with pytest.raises(RuntimeError, match="not target-block aligned"):
+            cache.read([0, 1], token_position=6)
         with pytest.raises(RuntimeError, match="missing the boundary-hidden block"):
             cache.read([0], token_position=7)
         with pytest.raises(RuntimeError, match="out of range"):
             cache.read([0, 3], token_position=7)
+        with pytest.raises(RuntimeError, match="no valid boundary-hidden"):
+            cache.read([0, 1], token_position=7)
         with pytest.raises(RuntimeError, match="slot is out of range"):
             cache.store([8], mx.zeros((1, 2), dtype=mx.float16))
 
