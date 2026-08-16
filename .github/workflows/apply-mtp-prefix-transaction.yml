@@ -75,7 +75,7 @@ jobs:
           new_regex = (
               'with self.assertRaisesRegex('
               'ValueError, "MTP cache entries and boundary state"): '
-          )
+          ).rstrip()
           if text.count(old_regex) != 1:
               raise RuntimeError("unaligned prompt-cache error assertion did not match")
           path.write_text(text.replace(old_regex, new_regex, 1))
