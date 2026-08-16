@@ -1,0 +1,695 @@
+diff --git a/tests/attention/test_align_gdn_state_manager.py b/tests/attention/test_align_gdn_state_manager.py
+index f086c92..12bddf5 100644
+--- a/tests/attention/test_align_gdn_state_manager.py
++++ b/tests/attention/test_align_gdn_state_manager.py
+@@ -3,10 +3,14 @@ from __future__ import annotations
+ 
+ import mlx.core as mx
+ import numpy as np
++import torch
+ 
+ from vllm_metal.attention.caches.gdn_cache import GDNPagedStateCache
+ from vllm_metal.attention.context import PagedAttentionContext
+-from vllm_metal.attention.runtime.hybrid import HybridPagedAttentionRuntime
++from vllm_metal.attention.runtime.hybrid import (
++    HybridPagedAttentionRuntime,
++    _build_linear_layer_spec,
++)
+ from vllm_metal.attention.state import AlignGDNStateManager
+ 
+ BLOCK = 4
+@@ -51,7 +55,17 @@ def _slab(cache: GDNPagedStateCache, layer: int, slab: int) -> tuple:
+ 
+ class TestAlignGDNStateManager:
+     def _populate(self, manager, req_ids, tables, positions):
+-        ctx = PagedAttentionContext(slot_mapping=[])
++        # The production batch packs decode requests first. Mirror that
++        # ordering so multi-token decode can be distinguished from chunked
++        # prefill without changing the ordinary prefill path.
++        num_decode_requests = 0
++        for num_computed, _ in positions:
++            if num_computed <= 0:
++                break
++            num_decode_requests += 1
++        ctx = PagedAttentionContext(
++            slot_mapping=[], num_decode_requests=num_decode_requests
++        )
+         manager.populate_step_context(
+             req_ids=req_ids,
+             ctx=ctx,
+@@ -120,6 +134,96 @@ class TestAlignGDNStateManager:
+         conv, _ = _slab(cache, 0, 3)  # group 1's checkpoint intact in the pool
+         np.testing.assert_array_equal(conv, 8.0)
+ 
++    def test_speculative_window_plans_one_state_per_input_token(self) -> None:
++        cache = _make_cache(num_blocks=12)
++        manager = AlignGDNStateManager(cache, BLOCK, num_speculative_blocks=2)
++        _fill_slab(cache, 0, 3, 5.0)
++        _fill_slab(cache, 1, 3, 5.0)
++
++        # Five tokens are already computed, so block-table column 1 is the
++        # current recurrent state. The two following columns are the scheduler's
++        # speculative Mamba blocks for a [confirmed, draft1, draft2] window.
++        ctx = self._populate(
++            manager,
++            ["req-A"],
++            [[[2, 3, 6, 7]]],
++            [(5, 3)],
++        )
++
++        assert ctx.gdn_group_slot_mappings == ([7],)
++        assert ctx.gdn_group_state_chains == ([[3, 3, 6, 7]],)
++
++    def test_speculative_commit_promotes_selected_checkpoint(self) -> None:
++        cache = _make_cache(num_blocks=12)
++        manager = AlignGDNStateManager(cache, BLOCK, num_speculative_blocks=2)
++        tables = [[[2, 3, 6, 7]]]
++        positions = [(5, 3)]
++        self._populate(manager, ["req-A"], tables, positions)
++
++        # Simulate the state-producing GDN path: slot 3 after confirmed token,
++        # slot 6 after draft one, slot 7 after draft two.
++        for layer in (0, 1):
++            _fill_slab(cache, layer, 3, 10.0)
++            _fill_slab(cache, layer, 6, 20.0)
++            _fill_slab(cache, layer, 7, 30.0)
++
++        manager.commit_speculative_state(
++            req_ids=["req-A"],
++            state_block_ids=tables,
++            step_positions=positions,
++            num_sampled_tokens=[2],
++        )
++
++        # Two emitted tokens means one draft accepted. The selected snapshot is
++        # slot 6, but the committed sequence is still in block-table column 1,
++        # so it is promoted back to scheduler block 3.
++        for layer in (0, 1):
++            conv, rec = _slab(cache, layer, 3)
++            np.testing.assert_array_equal(conv, 20.0)
++            np.testing.assert_array_equal(rec, 20.0)
++
++    def test_speculative_commit_crosses_block_boundary(self) -> None:
++        cache = _make_cache(num_blocks=12)
++        manager = AlignGDNStateManager(cache, BLOCK, num_speculative_blocks=2)
++        tables = [[[2, 3, 6, 7]]]
++        positions = [(7, 3)]
++        self._populate(manager, ["req-A"], tables, positions)
++
++        for layer in (0, 1):
++            _fill_slab(cache, layer, 3, 10.0)
++            _fill_slab(cache, layer, 6, 20.0)
++            _fill_slab(cache, layer, 7, 30.0)
++
++        manager.commit_speculative_state(
++            req_ids=["req-A"],
++            state_block_ids=tables,
++            step_positions=positions,
++            num_sampled_tokens=[3],
++        )
++
++        # Three emitted tokens selects state slot 7. The accepted sequence has
++        # crossed into positional block-table column 2, so slot 7 is promoted
++        # into scheduler block 6.
++        for layer in (0, 1):
++            conv, rec = _slab(cache, layer, 6)
++            np.testing.assert_array_equal(conv, 30.0)
++            np.testing.assert_array_equal(rec, 30.0)
++
++    def test_linear_spec_reports_scheduler_speculative_blocks(self) -> None:
++        spec = _build_linear_layer_spec(
++            conv_kernel_dim=2,
++            conv_dim=4,
++            num_v_heads=1,
++            value_head_dim=4,
++            key_head_dim=32,
++            torch_dtype=torch.float16,
++            mamba_block_size=BLOCK,
++            mamba_cache_mode="align",
++            num_speculative_blocks=3,
++        )
++        assert spec.num_speculative_blocks == 3
++        assert spec.max_num_blocks_per_req is not None
++
+     def test_pool_materializes_lazily_by_high_water_block_id(self) -> None:
+         cache = _make_cache(num_blocks=8, initial_blocks=2)
+         manager = AlignGDNStateManager(cache, BLOCK)
+diff --git a/tests/test_gdn_lazy_wrapper.py b/tests/test_gdn_lazy_wrapper.py
+index 4d3292c..5e31934 100644
+--- a/tests/test_gdn_lazy_wrapper.py
++++ b/tests/test_gdn_lazy_wrapper.py
+@@ -110,6 +110,55 @@ def _make_state_cache(
+     )
+ 
+ 
++class TestGDNSpeculativeStateChains:
++    def test_full_wrapper_writes_conv_and_recurrent_snapshot_per_token(self) -> None:
++        inner = _TinyGDNInner()
++        cache = _make_state_cache(
++            max_seqs=4,
++            conv_kernel_dim=inner.conv_kernel_size,
++            conv_dim=inner.conv_dim,
++            num_v_heads=inner.num_v_heads,
++            value_head_dim=inner.head_v_dim,
++            key_head_dim=inner.head_k_dim,
++        )
++        wrapper = GDNPagedAttentionWrapper(
++            inner, layer_idx=0, cache_idx=0, state_cache=cache
++        )
++        context = PagedAttentionContext(
++            slot_mapping=[],
++            cu_seqlens=[0, 3],
++            num_decode_requests=1,
++            gdn_group_slot_mappings=([2],),
++            gdn_group_state_chains=([[0, 0, 1, 2]],),
++        )
++        tokens = mx.stack(
++            [
++                mx.full((inner.conv_dim,), 0.01, dtype=mx.float32),
++                mx.full((inner.conv_dim,), 0.02, dtype=mx.float32),
++                mx.full((inner.conv_dim,), 0.03, dtype=mx.float32),
++            ],
++            axis=0,
++        )[None]
++
++        set_context(context)
++        try:
++            output = wrapper(tokens)
++        finally:
++            clear_context()
++        mx.eval(output, *cache.updated_state_arrays())
++
++        assert output.shape == (1, 3, inner.head_v_dim)
++        conv = np.array(cache.conv_states[0])
++        np.testing.assert_allclose(conv[0], 0.01, atol=1e-6)
++        np.testing.assert_allclose(conv[1], 0.02, atol=1e-6)
++        np.testing.assert_allclose(conv[2], 0.03, atol=1e-6)
++
++        recurrent = np.array(cache.recurrent_states[0])
++        assert np.any(recurrent[0] != 0)
++        assert np.any(recurrent[1] != recurrent[0])
++        assert np.any(recurrent[2] != recurrent[1])
++
++
+ class TestGDNPagedAttentionWrapperLazyKernels:
+     def test_mixed_batch_with_prefill_tries_recurrent_lazy_path(
+         self, monkeypatch: pytest.MonkeyPatch
+diff --git a/vllm_metal/attention/context.py b/vllm_metal/attention/context.py
+index cfb8b87..1ba4c7a 100644
+--- a/vllm_metal/attention/context.py
++++ b/vllm_metal/attention/context.py
+@@ -71,6 +71,12 @@ class PagedAttentionContext:
+     # block id / state slab).
+     gdn_slot_mapping: list[int] | None = None
+     gdn_group_slot_mappings: tuple[list[int], ...] | None = None
++    # Align-mode speculative verification needs one observable GDN state after
++    # every input token. Per group, each request therefore receives a chain
++    # ``[initial, after_token_0, ..., after_token_K]``. Empty request entries
++    # keep the ordinary one-destination path. The runtime safety gate remains
++    # active until the GDN wrapper consumes this contract.
++    gdn_group_state_chains: tuple[list[list[int]], ...] | None = None
+     # Number of decode requests packed at the front of the batch.
+     # This lets attention wrappers distinguish pure prefill from mixed prefill+decode
+     # without reverse-engineering one-token segments from ``cu_seqlens``.
+diff --git a/vllm_metal/attention/impls/linear.py b/vllm_metal/attention/impls/linear.py
+index 07e3e95..a2d56af 100644
+--- a/vllm_metal/attention/impls/linear.py
++++ b/vllm_metal/attention/impls/linear.py
+@@ -13,7 +13,7 @@ from typing import Any
+ 
+ import mlx.core as mx
+ import mlx.nn as nn
+-from mlx_lm.models.gated_delta import compute_g
++from mlx_lm.models.gated_delta import compute_g, gated_delta_kernel
+ 
+ from vllm_metal.attention.caches.gdn_cache import GDNPagedStateCache
+ from vllm_metal.attention.context import PagedAttentionContext, get_context
+@@ -45,6 +45,9 @@ class _GDNForwardState:
+     total_tokens: int
+     slot_ids: list[int]
+     num_decode_requests: int
++    # Per request: [initial, after_token_0, ..., after_token_K]. Empty
++    # entries retain the ordinary one-destination path.
++    state_chains: list[list[int]] | None = None
+ 
+ 
+ @dataclass(frozen=True)
+@@ -168,6 +171,25 @@ class GDNPagedAttentionWrapper(nn.Module):
+             raise RuntimeError("GDN wrapper requires unique slots per request")
+         self._gdn_state_cache.require_allocated_slots(slot_ids)
+ 
++        state_chains = None
++        if ctx.gdn_group_state_chains is not None:
++            ordinal = self._gdn_state_cache.layer_group_ordinal(self._gdn_cache_idx)
++            state_chains = ctx.gdn_group_state_chains[ordinal]
++            if len(state_chains) != num_requests:
++                raise RuntimeError(
++                    "GDN wrapper requires one speculative state chain per request"
++                )
++            for req_idx, chain in enumerate(state_chains):
++                if not chain:
++                    continue
++                request_tokens = cu_seqlens[req_idx + 1] - cu_seqlens[req_idx]
++                if len(chain) != request_tokens + 1:
++                    raise RuntimeError(
++                        f"GDN request {req_idx} has {request_tokens} input tokens "
++                        f"but a {len(chain)}-entry state chain"
++                    )
++                self._gdn_state_cache.require_allocated_slots(chain)
++
+         return _GDNForwardState(
+             x=x,
+             cu_seqlens=cu_seqlens,
+@@ -175,6 +197,7 @@ class GDNPagedAttentionWrapper(nn.Module):
+             total_tokens=x.shape[1],
+             slot_ids=slot_ids,
+             num_decode_requests=ctx.num_decode_requests,
++            state_chains=state_chains,
+         )
+ 
+     def _project_inputs(
+@@ -212,6 +235,9 @@ class GDNPagedAttentionWrapper(nn.Module):
+ 
+     def _run_conv(self, mixed_qkv: mx.array, state: _GDNForwardState) -> mx.array:
+         # === Step 2: Conv1d (per-request, needs conv_state) ===
++        if state.state_chains is not None and any(state.state_chains):
++            return self._run_conv_state_chains(mixed_qkv, state)
++
+         inner = self._inner
+         state_cache = self._gdn_state_cache
+         cache_idx = self._gdn_cache_idx
+@@ -271,6 +297,54 @@ class GDNPagedAttentionWrapper(nn.Module):
+ 
+         return mx.concatenate(conv_outputs, axis=1)
+ 
++    def _run_conv_state_chains(
++        self, mixed_qkv: mx.array, state: _GDNForwardState
++    ) -> mx.array:
++        """Produce an observable conv-state checkpoint after every token.
++
++        This is the correctness-first path for speculative verification. It is
++        intentionally request/token sequential; ordinary decode and prefill
++        remain on their existing fused/lazy kernels.
++        """
++        inner = self._inner
++        state_cache = self._gdn_state_cache
++        cache_idx = self._gdn_cache_idx
++        state_cache.apply_pending_conv_state(cache_idx)
++        pool = state_cache.conv_states[cache_idx]
++        outputs: list[mx.array] = []
++
++        assert state.state_chains is not None
++        for req_idx in range(state.num_requests):
++            start = state.cu_seqlens[req_idx]
++            end = state.cu_seqlens[req_idx + 1]
++            request_qkv = mixed_qkv[:, start:end, :]
++            chain = state.state_chains[req_idx]
++
++            if not chain:
++                slot = state.slot_ids[req_idx]
++                conv_state = pool[slot : slot + 1]
++                conv_input = mx.concatenate([conv_state, request_qkv], axis=1)
++                new_conv = conv_input[:, -(inner.conv_kernel_size - 1) :]
++                pool[slot : slot + 1] = new_conv
++                conv_out = nn.silu(inner.conv1d(conv_input))
++                outputs.append(conv_out[:, -(end - start) :, :])
++                continue
++
++            conv_state = pool[chain[0] : chain[0] + 1]
++            request_outputs: list[mx.array] = []
++            for token_offset, dst in enumerate(chain[1:]):
++                token_qkv = request_qkv[:, token_offset : token_offset + 1, :]
++                conv_input = mx.concatenate([conv_state, token_qkv], axis=1)
++                new_conv = conv_input[:, -(inner.conv_kernel_size - 1) :]
++                pool[dst : dst + 1] = new_conv
++                conv_state = new_conv
++                conv_out = nn.silu(inner.conv1d(conv_input))
++                request_outputs.append(conv_out[:, -1:, :])
++            outputs.append(mx.concatenate(request_outputs, axis=1))
++
++        state_cache.store_conv_state(cache_idx, pool)
++        return mx.concatenate(outputs, axis=1)
++
+     def _split_and_normalize(
+         self, conv_packed: mx.array, state: _GDNForwardState
+     ) -> tuple[mx.array, mx.array, mx.array]:
+@@ -313,6 +387,9 @@ class GDNPagedAttentionWrapper(nn.Module):
+         state: _GDNForwardState,
+     ) -> mx.array:
+         # === Step 5: Batched recurrent update ===
++        if state.state_chains is not None and any(state.state_chains):
++            return self._run_recurrent_state_chains(q, k, v, g, beta, state)
++
+         if state.num_decode_requests == state.num_requests:
+             request = GDNRecurrentDecodeRequest(
+                 q=q,
+@@ -351,6 +428,62 @@ class GDNPagedAttentionWrapper(nn.Module):
+         self._gdn_state_cache.apply_pending_recurrent_state(self._gdn_cache_idx)
+         return self._run_recurrent_fallback(q, k, v, g, beta, state)
+ 
++    def _run_recurrent_state_chains(
++        self,
++        q: mx.array,
++        k: mx.array,
++        v: mx.array,
++        g: mx.array,
++        beta: mx.array,
++        state: _GDNForwardState,
++    ) -> mx.array:
++        """Produce one recurrent-state snapshot per verification token."""
++        state_cache = self._gdn_state_cache
++        cache_idx = self._gdn_cache_idx
++        state_cache.apply_pending_recurrent_state(cache_idx)
++        pool = state_cache.recurrent_states[cache_idx]
++        outputs: list[mx.array] = []
++
++        assert state.state_chains is not None
++        for req_idx in range(state.num_requests):
++            start = state.cu_seqlens[req_idx]
++            end = state.cu_seqlens[req_idx + 1]
++            chain = state.state_chains[req_idx]
++
++            if not chain:
++                slot = state.slot_ids[req_idx]
++                request_output, new_state = gated_delta_kernel(
++                    q[:, start:end],
++                    k[:, start:end],
++                    v[:, start:end],
++                    g[:, start:end],
++                    beta[:, start:end],
++                    pool[slot : slot + 1],
++                )
++                pool[slot : slot + 1] = new_state
++                outputs.append(request_output.reshape(end - start, *v.shape[2:]))
++                continue
++
++            recurrent_state = pool[chain[0] : chain[0] + 1]
++            request_outputs: list[mx.array] = []
++            for token_offset, dst in enumerate(chain[1:]):
++                token = start + token_offset
++                token_output, new_state = gated_delta_kernel(
++                    q[:, token : token + 1],
++                    k[:, token : token + 1],
++                    v[:, token : token + 1],
++                    g[:, token : token + 1],
++                    beta[:, token : token + 1],
++                    recurrent_state,
++                )
++                pool[dst : dst + 1] = new_state
++                recurrent_state = new_state
++                request_outputs.append(token_output.reshape(1, *v.shape[2:]))
++            outputs.append(mx.concatenate(request_outputs, axis=0))
++
++        state_cache.store_recurrent_state(cache_idx, pool)
++        return mx.concatenate(outputs, axis=0).astype(state.x.dtype)
++
+     def _should_try_recurrent_prefill_containing_lazy(
+         self, state: _GDNForwardState
+     ) -> bool:
+diff --git a/vllm_metal/attention/runtime/hybrid.py b/vllm_metal/attention/runtime/hybrid.py
+index f15048c..5460090 100644
+--- a/vllm_metal/attention/runtime/hybrid.py
++++ b/vllm_metal/attention/runtime/hybrid.py
+@@ -50,6 +50,7 @@ def _build_linear_layer_spec(
+     page_size_padded: int | None = None,
+     mamba_block_size: int,
+     mamba_cache_mode: str = "none",
++    num_speculative_blocks: int = 0,
+ ) -> MambaSpec:
+     """Build the scheduler-visible GDN state spec.
+ 
+@@ -66,6 +67,7 @@ def _build_linear_layer_spec(
+         page_size_padded=page_size_padded,
+         mamba_type=MambaAttentionBackendEnum.GDN_ATTN,
+         mamba_cache_mode=mamba_cache_mode,
++        num_speculative_blocks=num_speculative_blocks,
+     )
+ 
+ 
+@@ -96,6 +98,8 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+         dtype: mx.Dtype,
+         # Scheduler-side mamba caching strategy ("none" or "align").
+         mamba_cache_mode: str = "none",
++        # One scheduler-owned GDN snapshot block per possible draft token.
++        num_speculative_blocks: int = 0,
+         # TurboQuant (SDPA layers only)
+         turboquant: bool = False,
+         k_quant: str | None = None,
+@@ -110,6 +114,9 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+                 f"{mamba_cache_mode!r} (only 'none' and 'align')"
+             )
+         self._mamba_cache_mode = mamba_cache_mode
++        if num_speculative_blocks < 0:
++            raise ValueError("num_speculative_blocks must be non-negative")
++        self._num_speculative_blocks = num_speculative_blocks
+ 
+         # SDPA params
+         self._num_kv_heads = num_kv_heads
+@@ -181,7 +188,11 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+             dtype=self._dtype,
+         )
+         self._gdn_state_manager = (
+-            AlignGDNStateManager(self._state_cache, self._block_size)
++            AlignGDNStateManager(
++                self._state_cache,
++                self._block_size,
++                self._num_speculative_blocks,
++            )
+             if align
+             else HybridGDNStateManager(self._state_cache)
+         )
+@@ -327,6 +338,25 @@ class HybridPagedAttentionRuntime(PagedAttentionRuntimeBase):
+             step_positions=step_positions,
+         )
+ 
++    def commit_speculative_state(
++        self,
++        *,
++        req_ids: list[str],
++        state_block_ids: list[list[list[int]]],
++        step_positions: list[tuple[int, int]],
++        num_sampled_tokens: list[int],
++    ) -> None:
++        if not isinstance(self.gdn_state_manager, AlignGDNStateManager):
++            raise RuntimeError(
++                "scheduler-owned speculative GDN state requires mamba_cache_mode='align'"
++            )
++        self.gdn_state_manager.commit_speculative_state(
++            req_ids=req_ids,
++            state_block_ids=state_block_ids,
++            step_positions=step_positions,
++            num_sampled_tokens=num_sampled_tokens,
++        )
++
+     def extend_forward_eval_outputs(self, outputs: list[mx.array]) -> None:
+         self.gdn_state_manager.extend_forward_eval_outputs(outputs)
+ 
+diff --git a/vllm_metal/attention/state/align.py b/vllm_metal/attention/state/align.py
+index 5d870b6..437f209 100644
+--- a/vllm_metal/attention/state/align.py
++++ b/vllm_metal/attention/state/align.py
+@@ -42,9 +42,17 @@ if TYPE_CHECKING:
+ class AlignGDNStateManager:
+     """Drive block-indexed GDN state for align-mode prefix caching."""
+ 
+-    def __init__(self, state_cache: GDNPagedStateCache, block_size: int) -> None:
++    def __init__(
++        self,
++        state_cache: GDNPagedStateCache,
++        block_size: int,
++        num_speculative_blocks: int = 0,
++    ) -> None:
++        if num_speculative_blocks < 0:
++            raise ValueError("num_speculative_blocks must be non-negative")
+         self._state_cache = state_cache
+         self._block_size = block_size
++        self._num_speculative_blocks = num_speculative_blocks
+         self._needs_materialize = False
+ 
+     @property
+@@ -101,8 +109,11 @@ class AlignGDNStateManager:
+             self._state_cache.ensure_capacity(target)
+ 
+         group_mappings: list[list[int]] = []
++        group_state_chains: list[list[list[int]]] = []
++        has_speculative_chains = False
+         for group in range(num_groups):
+             dst_ids: list[int] = []
++            request_chains: list[list[int]] = []
+             copy_src: list[int] = []
+             copy_dst: list[int] = []
+             zero_ids: list[int] = []
+@@ -113,6 +124,43 @@ class AlignGDNStateManager:
+                         f"align GDN state manager: request "
+                         f"{req_ids[req_idx]!r} scheduled {num_scheduled} tokens"
+                     )
++
++                is_speculative_verify = (
++                    self._num_speculative_blocks > 0
++                    and req_idx < ctx.num_decode_requests
++                    and num_scheduled > 1
++                )
++                if is_speculative_verify:
++                    if num_computed <= 0:
++                        raise RuntimeError(
++                            "speculative GDN verification requires an existing "
++                            "committed state"
++                        )
++                    num_drafts = num_scheduled - 1
++                    if num_drafts > self._num_speculative_blocks:
++                        raise RuntimeError(
++                            f"request {req_ids[req_idx]!r} scheduled {num_drafts} "
++                            "draft tokens but its MambaSpec reserves only "
++                            f"{self._num_speculative_blocks} speculative blocks"
++                        )
++                    state_idx = (num_computed - 1) // self._block_size
++                    end = state_idx + num_scheduled
++                    if end > len(row):
++                        raise RuntimeError(
++                            f"request {req_ids[req_idx]!r} needs GDN state "
++                            f"columns [{state_idx}, {end}) but its mamba block "
++                            f"table has {len(row)} entries"
++                        )
++                    # This mirrors upstream mamba_get_block_table_tensor():
++                    # current state block followed by K speculative blocks.
++                    output_slots = list(row[state_idx:end])
++                    # Token zero reads and overwrites the current private state
++                    # block; each draft writes the following speculative block.
++                    request_chains.append([output_slots[0], *output_slots])
++                    dst_ids.append(output_slots[-1])
++                    has_speculative_chains = True
++                    continue
++
+                 dst_idx = (num_computed + num_scheduled - 1) // self._block_size
+                 if dst_idx >= len(row):
+                     raise RuntimeError(
+@@ -123,6 +171,7 @@ class AlignGDNStateManager:
+                     )
+                 dst = row[dst_idx]
+                 dst_ids.append(dst)
++                request_chains.append([])
+                 if num_computed == 0:
+                     zero_ids.append(dst)
+                     continue
+@@ -136,8 +185,69 @@ class AlignGDNStateManager:
+             self._state_cache.zero_slots(zero_ids, layer_indices)
+             self._state_cache.copy_slots(copy_src, copy_dst, layer_indices)
+             group_mappings.append(dst_ids)
++            group_state_chains.append(request_chains)
+ 
+         ctx.gdn_group_slot_mappings = tuple(group_mappings)
++        ctx.gdn_group_state_chains = (
++            tuple(group_state_chains) if has_speculative_chains else None
++        )
++        self._needs_materialize = True
++
++    def commit_speculative_state(
++        self,
++        *,
++        req_ids: list[str],
++        state_block_ids: list[list[list[int]]],
++        step_positions: list[tuple[int, int]],
++        num_sampled_tokens: list[int],
++    ) -> None:
++        """Promote the verifier-selected GDN checkpoint.
++
++        A verification window with ``K`` drafts writes state after each of its
++        ``K + 1`` input tokens into consecutive Mamba block-table columns.
++        The verifier emits ``num_sampled`` tokens; upstream's invariant is that
++        the committed recurrent checkpoint is column ``num_sampled - 1``.
++        """
++        if not (
++            len(req_ids)
++            == len(state_block_ids)
++            == len(step_positions)
++            == len(num_sampled_tokens)
++        ):
++            raise RuntimeError("speculative GDN commit metadata length mismatch")
++
++        self._state_cache.apply_pending_states()
++        num_groups = len(state_block_ids[0]) if state_block_ids else 0
++        for group in range(num_groups):
++            copy_src: list[int] = []
++            copy_dst: list[int] = []
++            for req_idx, (num_computed, num_scheduled) in enumerate(step_positions):
++                if num_scheduled <= 1:
++                    continue
++                sampled = num_sampled_tokens[req_idx]
++                if sampled < 1 or sampled > num_scheduled:
++                    raise RuntimeError(
++                        f"request {req_ids[req_idx]!r} sampled {sampled} tokens "
++                        f"for a {num_scheduled}-token verification window"
++                    )
++                row = state_block_ids[req_idx][group]
++                state_idx = (num_computed - 1) // self._block_size
++                selected_idx = state_idx + sampled - 1
++                committed_idx = (num_computed + sampled - 1) // self._block_size
++                if max(selected_idx, committed_idx) >= len(row):
++                    raise RuntimeError(
++                        f"request {req_ids[req_idx]!r} speculative commit "
++                        "exceeds its mamba block table"
++                    )
++                selected = row[selected_idx]
++                committed = row[committed_idx]
++                if selected != committed:
++                    copy_src.append(selected)
++                    copy_dst.append(committed)
++
++            layer_indices = self._state_cache.layers_for_group_ordinal(group)
++            self._state_cache.copy_slots(copy_src, copy_dst, layer_indices)
++
+         self._needs_materialize = True
+ 
+     def extend_forward_eval_outputs(self, outputs: list[mx.array]) -> None:
+diff --git a/vllm_metal/v1/cache_policy.py b/vllm_metal/v1/cache_policy.py
+index 2a43f8e..9a09143 100644
+--- a/vllm_metal/v1/cache_policy.py
++++ b/vllm_metal/v1/cache_policy.py
+@@ -368,6 +368,7 @@ class ModelCachePolicy:
+                     page_size_padded=cache_config.mamba_page_size_padded,
+                     mamba_block_size=mamba_block_size,
+                     mamba_cache_mode=cache_config.mamba_cache_mode,
++                    num_speculative_blocks=self._num_speculative_blocks(),
+                 )
+             elif use_turboquant:
+                 layer_name = f"layers.{layer_idx}.self_attn"
+@@ -796,13 +797,13 @@ class ModelCachePolicy:
+         MambaSpec carries ``mamba_page_size_padded`` — an unpadded estimate
+         falls short of that requirement by the padding margin.
+         """
+-        # Mirrors MambaSpec.max_memory_usage_bytes with zero speculative
+-        # blocks and mamba_cache_mode "none"; if vLLM's defaults change,
+-        # this mirror must follow.
++        # Mirrors MambaSpec.max_memory_usage_bytes in mamba_cache_mode
++        # "none": one live state plus one snapshot per speculative token.
++        multiplier = 1 + self._num_speculative_blocks()
+         padded = self._runner.cache_config.mamba_page_size_padded
+         if padded is not None:
+-            return self._runner.num_linear_layers * padded
+-        return self.linear_cache_bytes_per_slot()
++            return self._runner.num_linear_layers * padded * multiplier
++        return self.linear_cache_bytes_per_slot() * multiplier
+ 
+     def _build_hybrid_backend(self, block_size: int) -> HybridPagedAttentionRuntime:
+         config = get_config()
+@@ -820,6 +821,7 @@ class ModelCachePolicy:
+             block_size=block_size,
+             dtype=self._require_kv_cache_dtype(),
+             mamba_cache_mode=self._runner.cache_config.mamba_cache_mode,
++            num_speculative_blocks=self._num_speculative_blocks(),
+             turboquant=config.turboquant,
+             k_quant=config.k_quant if config.turboquant else None,
+             v_quant=config.v_quant if config.turboquant else None,
+@@ -943,6 +945,12 @@ class ModelCachePolicy:
+         )
+         return num_cache_layers, cache_idx_map
+ 
++    def _num_speculative_blocks(self) -> int:
++        speculative_config = self._runner.vllm_config.speculative_config
++        if speculative_config is None:
++            return 0
++        return int(speculative_config.num_speculative_tokens or 0)
++
+     def _require_kv_cache_dtype(self) -> mx.Dtype:
+         if self._runner.kv_cache_dtype is None:
+             raise RuntimeError("KV cache dtype not initialized; load_model() first")
