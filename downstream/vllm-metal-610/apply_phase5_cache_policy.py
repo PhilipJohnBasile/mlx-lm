@@ -114,7 +114,10 @@ replace_once(
             _, num_mtp_layers, mtp_kv_heads, mtp_head_dim, _ = metadata
             mtp_spec = QwenMTPAttentionSpec(
                 block_size=block_size,
-                num_kv_heads=mtp_kv_heads,
+                # HiddenStateCacheSpec reports one latent tensor. Doubling the
+                # logical head slots makes its page bytes equal the physical
+                # dense K+V arrays owned by MetalPagedKVCache.
+                num_kv_heads=2 * mtp_kv_heads,
                 head_size=mtp_head_dim,
                 dtype=torch_dtype,
             )
@@ -129,9 +132,9 @@ replace_once(
                     \"native Qwen MTP requires its KV page size to match the \"
                     \"target full-attention page size\"
                 )
-            # Keep these entries last: vLLM marks the group containing the final
-            # cache layer as the EAGLE/MTP group and applies the one-block lag
-            # during prefix-hit reconciliation.
+            # HiddenStateCacheSpec is vLLM's cache-only grouping path. It keeps
+            # the one-layer MTP cache distinct without reducing every hybrid
+            # target/GDN group to size one.
             for layer_idx in range(num_mtp_layers):
                 specs[f\"mtp.layers.{layer_idx}.self_attn\"] = mtp_spec
 
@@ -175,12 +178,11 @@ replace_once(
                     \"native Qwen MTP cache was incorrectly merged into the \"
                     \"target SDPA scheduler group\"
                 )
+            # vLLM treats method='mtp' as EAGLE. When no group is explicitly
+            # annotated, KVCacheCoordinator conservatively applies the lookahead
+            # drop to every group, preserving one shared prefix lineage across
+            # target SDPA, GDN, and this cache-only MTP group.
             mtp_group = kv_cache_config.kv_cache_groups[mtp_group_index]
-            if not mtp_group.is_eagle_group:
-                raise RuntimeError(
-                    \"native Qwen MTP scheduler group is missing EAGLE/MTP \"
-                    \"lookahead semantics\"
-                )
             mtp_block_size = mtp_group.kv_cache_spec.block_size
 
         # Align mode keys GDN state slabs by scheduler block id.  The engine
