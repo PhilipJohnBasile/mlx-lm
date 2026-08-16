@@ -1,0 +1,157 @@
+name: Validate vLLM Metal 610 phase 4
+
+on:
+  push:
+    branches:
+      - lab/vllm-metal-610-spider-web
+    paths:
+      - downstream/vllm-metal-610/apply_phase1_state_chain.py
+      - downstream/vllm-metal-610/run_phase1_state_chain_v2.py
+      - downstream/vllm-metal-610/apply_phase2_state_production.py
+      - downstream/vllm-metal-610/apply_phase3_verifier_commit.py
+      - downstream/vllm-metal-610/apply_phase4_*.py
+      - downstream/vllm-metal-610/qwen_native_mtp_proposer.pyfrag
+      - downstream/vllm-metal-610/test_qwen_native_mtp_proposer.py
+      - .github/workflows/validate-vllm-metal-610-phase4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  phase4-qwen-proposer:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: macos-14
+    steps:
+      - name: Checkout patch lab
+        uses: actions/checkout@v5
+        with:
+          ref: lab/vllm-metal-610-spider-web
+          path: lab
+          fetch-depth: 0
+
+      - name: Checkout pinned vllm-metal
+        uses: actions/checkout@v5
+        with:
+          repository: vllm-project/vllm-metal
+          ref: 083f581f048b1b4460f166b31ec18dc6ec000e17
+          path: vllm-metal
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install vLLM Metal unit-test environment
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          python -m pip install --upgrade pip uv
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install \
+            'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl'
+          python -m pip install -e '.[dev]'
+
+      - name: Apply transactional GDN and native-Qwen proposer patches
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain_v2.py
+          python ../lab/downstream/vllm-metal-610/apply_phase2_state_production.py
+          python ../lab/downstream/vllm-metal-610/apply_phase3_verifier_commit.py
+          python ../lab/downstream/vllm-metal-610/apply_phase4_adapter.py
+          python ../lab/downstream/vllm-metal-610/apply_phase4_proposer.py
+          python ../lab/downstream/vllm-metal-610/apply_phase4_runner.py
+          cp ../lab/downstream/vllm-metal-610/test_qwen_native_mtp_proposer.py \
+             tests/test_qwen_native_mtp_proposer.py
+          git diff --check
+
+      - name: Format and lint changed sources
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          ruff format \
+            vllm_metal/attention/context.py \
+            vllm_metal/attention/state/align.py \
+            vllm_metal/attention/runtime/hybrid.py \
+            vllm_metal/attention/impls/linear.py \
+            vllm_metal/v1/cache_policy.py \
+            vllm_metal/v1/model_adapter.py \
+            vllm_metal/v1/model_runner.py \
+            vllm_metal/v1/proposer.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_v1_model_runner_generate.py \
+            tests/test_qwen_native_mtp_proposer.py
+          ruff check \
+            vllm_metal/attention/context.py \
+            vllm_metal/attention/state/align.py \
+            vllm_metal/attention/runtime/hybrid.py \
+            vllm_metal/attention/impls/linear.py \
+            vllm_metal/v1/cache_policy.py \
+            vllm_metal/v1/model_adapter.py \
+            vllm_metal/v1/model_runner.py \
+            vllm_metal/v1/proposer.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_v1_model_runner_generate.py \
+            tests/test_qwen_native_mtp_proposer.py
+          git diff --check
+
+      - name: Run proposer and transactional scheduler tests
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          set +e
+          pytest -q \
+            tests/test_qwen_native_mtp_proposer.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_v1_model_runner_generate.py \
+            tests/test_turboquant_hybrid_sizing.py \
+            tests/test_platform.py \
+            > ../lab/downstream/vllm-metal-610/phase4-tests.log 2>&1
+          status=$?
+          set -e
+          cat ../lab/downstream/vllm-metal-610/phase4-tests.log
+          if [ "$status" -ne 0 ]; then
+            cd ../lab
+            git config user.name 'Philip John Basile'
+            git config user.email 'PBasile@Basilecom.com'
+            git add downstream/vllm-metal-610/phase4-tests.log
+            git commit -m 'debug: preserve vllm-metal phase-4 pytest failure' || true
+            git fetch origin lab/vllm-metal-610-spider-web
+            git rebase origin/lab/vllm-metal-610-spider-web
+            git push origin HEAD:lab/vllm-metal-610-spider-web
+            exit "$status"
+          fi
+          rm ../lab/downstream/vllm-metal-610/phase4-tests.log
+
+      - name: Export deterministic combined patch
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          git diff --binary > ../lab/downstream/vllm-metal-610/phase4-qwen-proposer.patch
+          git diff --stat > ../lab/downstream/vllm-metal-610/phase4-qwen-proposer.stat
+          test -s ../lab/downstream/vllm-metal-610/phase4-qwen-proposer.patch
+
+      - name: Publish validated patch to lab branch
+        shell: bash
+        working-directory: lab
+        run: |
+          git config user.name 'Philip John Basile'
+          git config user.email 'PBasile@Basilecom.com'
+          git add downstream/vllm-metal-610/phase4-qwen-proposer.patch \
+                  downstream/vllm-metal-610/phase4-qwen-proposer.stat
+          if git diff --cached --quiet; then
+            echo 'No patch changes to publish'
+            exit 0
+          fi
+          git commit -m 'build: publish validated vllm-metal 610 phase-4 patch'
+          git fetch origin lab/vllm-metal-610-spider-web
+          git rebase origin/lab/vllm-metal-610-spider-web
+          git push origin HEAD:lab/vllm-metal-610-spider-web
