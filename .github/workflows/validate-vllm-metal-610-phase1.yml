@@ -94,10 +94,25 @@ jobs:
         working-directory: vllm-metal
         run: |
           source .venv/bin/activate
+          set +e
           pytest -q \
             tests/attention/test_align_gdn_state_manager.py \
             tests/test_turboquant_hybrid_sizing.py \
-            tests/test_platform.py
+            tests/test_platform.py \
+            > ../lab/downstream/vllm-metal-610/phase1-tests.log 2>&1
+          status=$?
+          set -e
+          cat ../lab/downstream/vllm-metal-610/phase1-tests.log
+          if [ "$status" -ne 0 ]; then
+            cd ../lab
+            git config user.name 'Philip John Basile'
+            git config user.email 'PBasile@Basilecom.com'
+            git add downstream/vllm-metal-610/phase1-tests.log
+            git commit -m 'debug: preserve vllm-metal phase-1 pytest failure' || true
+            git push origin HEAD:lab/vllm-metal-610-spider-web
+            exit "$status"
+          fi
+          rm ../lab/downstream/vllm-metal-610/phase1-tests.log
 
       - name: Export deterministic patch
         shell: bash
