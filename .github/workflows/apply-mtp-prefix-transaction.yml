@@ -54,22 +54,22 @@ jobs:
           end = text.index(
               "    def test_mtp_rejects_unaligned_populated_prompt_cache", start
           )
-          block = text[start:end]
-          call_start = block.index("        next(\n")
-          assertion = "        self.assertEqual(len(prompt_cache), n_main + 1)"
-          assertion_start = block.index(assertion)
-          assertion_end = assertion_start + len(assertion)
-          replacement = '''        generator = mtp_generate_step(
-              prompt,
-              self.model,
-              max_tokens=1,
-              prompt_cache=prompt_cache,
-          )
-          next(generator)
-          generator.close()
-          self.assertEqual(len(prompt_cache), n_main + 2)'''
-          block = block[:call_start] + replacement + block[assertion_end:]
-          text = text[:start] + block + text[end:]
+          replacement = '''    def test_mtp_extends_fresh_prompt_cache(self):
+              prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+              prompt_cache = make_prompt_cache(self.model)
+              n_main = len(prompt_cache)
+              generator = mtp_generate_step(
+                  prompt,
+                  self.model,
+                  max_tokens=1,
+                  prompt_cache=prompt_cache,
+              )
+              next(generator)
+              generator.close()
+              self.assertEqual(len(prompt_cache), n_main + 2)
+
+          '''
+          text = text[:start] + replacement + text[end:]
 
           old_regex = 'with self.assertRaisesRegex(ValueError, "aligned MTP cache"):'
           new_regex = (
@@ -78,8 +78,7 @@ jobs:
           )
           if text.count(old_regex) != 1:
               raise RuntimeError("unaligned prompt-cache error assertion did not match")
-          text = text.replace(old_regex, new_regex, 1)
-          path.write_text(text)
+          path.write_text(text.replace(old_regex, new_regex, 1))
           PY
           git diff --check
 
