@@ -1,0 +1,77 @@
+name: Validate vLLM Metal hybrid GDN speculative state blocks
+
+on:
+  push:
+    branches:
+      - automation/vllm-metal-gdn-spec-blocks
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out patch staging branch
+        uses: actions/checkout@v5
+
+      - name: Check out pinned vllm-metal source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work
+          git clone https://github.com/vllm-project/vllm-metal.git work/vllm-metal
+          git -C work/vllm-metal checkout 083f581f048b1b4460f166b31ec18dc6ec000e17
+
+      - name: Reconstruct and apply patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work/vllm-metal/tools
+          cat tools/vllm_metal_gdn_spec_parts/part*.b64 \
+            | tr -d '\n' \
+            | base64 --decode \
+            > work/vllm-metal/tools/apply_gdn_spec_blocks.py
+          python3 -m py_compile work/vllm-metal/tools/apply_gdn_spec_blocks.py
+          cd work/vllm-metal
+          python3 tools/apply_gdn_spec_blocks.py
+          git diff --check
+          python3 -m compileall -q \
+            vllm_metal/attention \
+            vllm_metal/v1 \
+            vllm_metal/platform.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_spec_decode_metadata.py
+          git diff --binary > ../vllm-metal-gdn-spec-blocks.patch
+
+      - name: Install development environment and lint
+        shell: bash
+        working-directory: work/vllm-metal
+        run: |
+          set -euxo pipefail
+          scripts/lint.sh
+
+      - name: Run focused state-transaction tests
+        shell: bash
+        working-directory: work/vllm-metal
+        run: |
+          set -euxo pipefail
+          source .venv-vllm-metal/bin/activate
+          pytest -q \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/attention/test_hybrid_gdn_state_manager.py \
+            tests/test_spec_decode_metadata.py \
+            tests/test_platform.py
+
+      - name: Upload review patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vllm-metal-gdn-spec-blocks
+          path: |
+            work/vllm-metal-gdn-spec-blocks.patch
+            work/vllm-metal/tools/apply_gdn_spec_blocks.py
+          if-no-files-found: warn
