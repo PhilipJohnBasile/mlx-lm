@@ -41,7 +41,7 @@ from .generate import (
     make_text_state_machine,
     stream_generate,
 )
-from .models.cache import LRUPromptCache, make_prompt_cache
+from .models.cache import LRUPromptCache, MTPPromptCacheState, make_prompt_cache
 from .sample_utils import make_logits_processors, make_sampler
 from .utils import _parse_size, load, sharded_load
 
@@ -923,12 +923,21 @@ class ResponseGenerator:
             mtp_active = getattr(self.cli_args, "mtp", False) and (
                 _model_supports_mtp(model)
             )
-            # Legacy entries contain only backbone state. They cannot be paired
-            # safely with a fresh MTP cache, so rebuild once. The cache stored after
-            # this request contains both aligned components.
-            if mtp_active and cache is not None and len(cache) == len(model.layers):
-                cache = None
-                rest = prompt
+            # A reusable native-MTP entry contains target caches, the MTP-head
+            # caches, and one boundary record holding the final target hidden state.
+            # Exact hits have no suffix token with which to resume the lagged MTP
+            # state, so they are rebuilt rather than replayed unsafely.
+            if mtp_active and cache is not None:
+                expected = len(model.layers) + len(model.make_mtp_cache()) + 1
+                valid_mtp_cache = (
+                    len(cache) == expected
+                    and isinstance(cache[-1], MTPPromptCacheState)
+                    and not cache[-1].empty()
+                    and len(rest) > 0
+                )
+                if not valid_mtp_cache:
+                    cache = None
+                    rest = prompt
             ctx.prompt_cache_count = len(prompt) - len(rest)
             cache_key = prompt[:]
             if cache is None:
