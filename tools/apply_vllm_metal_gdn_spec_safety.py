@@ -105,9 +105,7 @@ replace_once(
 )
 replace_once(
     "vllm_metal/v1/spec_decode.py",
-    """        if (
-            active_spec_tokens or has_invalid_spec_tokens
-        ) and not paged_attention_enabled:
+    """        if (active_spec_tokens or has_invalid_spec_tokens) and not paged_attention_enabled:
             raise NotImplementedError(
                 "Speculative decode verification on Metal requires paged "
                 "attention so draft-token rows can share scheduler-assigned "
@@ -116,9 +114,7 @@ replace_once(
 
         decode_req_ids = {req_id for req_id, _ in decode_reqs}
 """,
-    """        if (
-            active_spec_tokens or has_invalid_spec_tokens
-        ) and not paged_attention_enabled:
+    """        if (active_spec_tokens or has_invalid_spec_tokens) and not paged_attention_enabled:
             raise NotImplementedError(
                 "Speculative decode verification on Metal requires paged "
                 "attention so draft-token rows can share scheduler-assigned "
