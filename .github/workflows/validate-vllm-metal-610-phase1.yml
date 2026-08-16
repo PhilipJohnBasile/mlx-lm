@@ -52,7 +52,7 @@ jobs:
         working-directory: vllm-metal
         run: |
           source .venv/bin/activate
-          python ../lab/downstream/vllm-metal-610/apply_phase1_state_chain.py
+          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain.py
           git diff --check
 
       - name: Format and lint changed sources
