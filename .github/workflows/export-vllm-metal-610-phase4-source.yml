@@ -1,0 +1,59 @@
+name: Export vLLM Metal 610 phase-4 source
+
+on:
+  push:
+    branches:
+      - lab/vllm-metal-610-spider-web
+    paths:
+      - .github/workflows/export-vllm-metal-610-phase4-source.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out patch lab
+        uses: actions/checkout@v5
+        with:
+          ref: lab/vllm-metal-610-spider-web
+          path: lab
+
+      - name: Check out pinned vllm-metal
+        uses: actions/checkout@v5
+        with:
+          repository: vllm-project/vllm-metal
+          ref: 083f581f048b1b4460f166b31ec18dc6ec000e17
+          path: vllm-metal
+          submodules: recursive
+
+      - name: Apply phases 1 through 4
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          set -euxo pipefail
+          python3 ../lab/downstream/vllm-metal-610/run_phase1_state_chain_v2.py
+          python3 ../lab/downstream/vllm-metal-610/apply_phase2_state_production.py
+          python3 ../lab/downstream/vllm-metal-610/apply_phase3_verifier_commit.py
+          python3 ../lab/downstream/vllm-metal-610/apply_phase4_adapter.py
+          python3 ../lab/downstream/vllm-metal-610/apply_phase4_proposer.py
+          python3 ../lab/downstream/vllm-metal-610/apply_phase4_runner.py
+          cp ../lab/downstream/vllm-metal-610/test_qwen_native_mtp_proposer.py \
+             tests/test_qwen_native_mtp_proposer.py
+          git diff --check
+
+      - name: Archive patched source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf vllm-metal/.git
+          tar -czf vllm-metal-610-phase4-source.tar.gz vllm-metal
+
+      - name: Upload patched source
+        uses: actions/upload-artifact@v4
+        with:
+          name: vllm-metal-610-phase4-source
+          path: vllm-metal-610-phase4-source.tar.gz
+          if-no-files-found: error
