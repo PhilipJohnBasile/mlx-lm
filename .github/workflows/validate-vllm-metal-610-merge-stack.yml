@@ -144,6 +144,7 @@ jobs:
           files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
           if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
           git diff --check
+          set +e
           pytest -q \
             tests/test_qwen_native_mtp_proposer.py \
             tests/test_qwen_mtp_paged_cache.py \
@@ -154,7 +155,23 @@ jobs:
             tests/test_gdn_lazy_wrapper.py \
             tests/test_v1_model_runner_generate.py \
             tests/test_turboquant_hybrid_sizing.py \
-            tests/test_platform.py
+            tests/test_platform.py \
+            > ../lab/downstream/vllm-metal-610/phase5-tests.log 2>&1
+          status=$?
+          set -e
+          cat ../lab/downstream/vllm-metal-610/phase5-tests.log
+          if [ "$status" -ne 0 ]; then
+            cd ../lab
+            git config user.name 'Philip John Basile'
+            git config user.email 'PBasile@Basilecom.com'
+            git add downstream/vllm-metal-610/phase5-tests.log
+            git commit -m 'debug: preserve phase-5 pytest failure' || true
+            git fetch origin stack/vllm-metal-610-merge-ready
+            git rebase origin/stack/vllm-metal-610-merge-ready
+            git push origin HEAD:stack/vllm-metal-610-merge-ready
+            exit "$status"
+          fi
+          rm ../lab/downstream/vllm-metal-610/phase5-tests.log
           git add -A
           git commit -m 'feat: cache native Qwen MTP state with hybrid prefixes'
 
