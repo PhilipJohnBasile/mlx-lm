@@ -51,27 +51,30 @@ jobs:
         shell: bash
         working-directory: work/vllm-metal
         run: |
-          set -euxo pipefail
-          scripts/lint.sh
+          set -o pipefail
+          scripts/lint.sh 2>&1 | tee ../vllm-metal-gdn-spec-blocks-lint.log
 
       - name: Run focused state-transaction tests
         shell: bash
         working-directory: work/vllm-metal
         run: |
-          set -euxo pipefail
+          set -o pipefail
           source .venv-vllm-metal/bin/activate
           pytest -q \
             tests/attention/test_align_gdn_state_manager.py \
             tests/attention/test_hybrid_gdn_state_manager.py \
             tests/test_spec_decode_metadata.py \
-            tests/test_platform.py
+            tests/test_platform.py \
+            2>&1 | tee ../vllm-metal-gdn-spec-blocks-tests.log
 
-      - name: Upload review patch
+      - name: Upload review patch and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vllm-metal-gdn-spec-blocks
           path: |
             work/vllm-metal-gdn-spec-blocks.patch
+            work/vllm-metal-gdn-spec-blocks-lint.log
+            work/vllm-metal-gdn-spec-blocks-tests.log
             work/vllm-metal/tools/apply_gdn_spec_blocks.py
           if-no-files-found: warn
