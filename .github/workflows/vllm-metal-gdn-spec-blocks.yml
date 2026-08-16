@@ -39,30 +39,37 @@ jobs:
             work/vllm-metal/tools/apply_gdn_spec_safety.py
           cp tools/apply_vllm_metal_gdn_spec_test_updates.py \
             work/vllm-metal/tools/apply_gdn_spec_test_updates.py
+          cp tools/apply_vllm_metal_gdn_wrapper_tests.py \
+            work/vllm-metal/tools/apply_gdn_wrapper_tests.py
           python3 -m py_compile \
             work/vllm-metal/tools/apply_gdn_spec_blocks.py \
             work/vllm-metal/tools/apply_gdn_spec_safety.py \
-            work/vllm-metal/tools/apply_gdn_spec_test_updates.py
+            work/vllm-metal/tools/apply_gdn_spec_test_updates.py \
+            work/vllm-metal/tools/apply_gdn_wrapper_tests.py
           cd work/vllm-metal
           set -o pipefail
           {
             python3 tools/apply_gdn_spec_blocks.py
             python3 tools/apply_gdn_spec_safety.py
             python3 tools/apply_gdn_spec_test_updates.py
+            python3 tools/apply_gdn_wrapper_tests.py
           } 2>&1 | tee ../vllm-metal-gdn-spec-blocks-apply.log
           cp tools/apply_gdn_spec_blocks.py ../vllm-metal-gdn-spec-blocks-apply.py
           cp tools/apply_gdn_spec_safety.py ../vllm-metal-gdn-spec-safety.py
           cp tools/apply_gdn_spec_test_updates.py ../vllm-metal-gdn-spec-test-updates.py
+          cp tools/apply_gdn_wrapper_tests.py ../vllm-metal-gdn-wrapper-tests.py
           rm \
             tools/apply_gdn_spec_blocks.py \
             tools/apply_gdn_spec_safety.py \
-            tools/apply_gdn_spec_test_updates.py
+            tools/apply_gdn_spec_test_updates.py \
+            tools/apply_gdn_wrapper_tests.py
           git diff --check
           python3 -m compileall -q \
             vllm_metal/attention \
             vllm_metal/v1 \
             vllm_metal/platform.py \
             tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
             tests/test_spec_decode_metadata.py \
             tests/test_platform.py
 
@@ -86,6 +93,7 @@ jobs:
             vllm_metal/v1/spec_decode.py \
             vllm_metal/platform.py \
             tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
             tests/test_spec_decode_metadata.py \
             tests/test_platform.py
           ruff format \
@@ -100,6 +108,7 @@ jobs:
             vllm_metal/v1/spec_decode.py \
             vllm_metal/platform.py \
             tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
             tests/test_spec_decode_metadata.py \
             tests/test_platform.py
           git diff --check
@@ -131,6 +140,7 @@ jobs:
           pytest -q \
             tests/attention/test_align_gdn_state_manager.py \
             tests/attention/test_hybrid_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
             tests/test_spec_decode_metadata.py \
             tests/test_platform.py \
             2>&1 | tee ../vllm-metal-gdn-spec-blocks-tests.log
@@ -149,4 +159,5 @@ jobs:
             work/vllm-metal-gdn-spec-blocks-apply.py
             work/vllm-metal-gdn-spec-safety.py
             work/vllm-metal-gdn-spec-test-updates.py
+            work/vllm-metal-gdn-wrapper-tests.py
           if-no-files-found: warn
