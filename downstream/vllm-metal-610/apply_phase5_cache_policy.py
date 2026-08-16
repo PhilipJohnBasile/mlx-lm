@@ -73,7 +73,9 @@ replace_once(
             * head_dim
             * dtype_size
         )
-        boundary_hidden = block_size * hidden_size * dtype_size
+        # EAGLE recomputes one full hash unit on a warm hit. Only the hidden
+        # checkpoint at the end of each retained target block is durable.
+        boundary_hidden = hidden_size * dtype_size + 1
         return mtp_kv + boundary_hidden
 
     def _build_qwen_mtp_state(self) -> QwenMTPPagedState | None:
