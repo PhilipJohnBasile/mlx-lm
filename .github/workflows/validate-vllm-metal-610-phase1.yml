@@ -53,7 +53,7 @@ jobs:
         run: |
           source .venv/bin/activate
           set +e
-          python ../lab/downstream/vllm-metal-610/apply_phase1_state_chain.py \
+          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain_v2.py \
             > ../lab/downstream/vllm-metal-610/phase1-apply.log 2>&1
           status=$?
           set -e
