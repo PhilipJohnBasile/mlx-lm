@@ -36,6 +36,7 @@ from .generate import (
     BatchGenerator,
     StopSequenceMatcher,
     TextStateMachine,
+    _model_supports_mtp,
     make_stop_matcher,
     make_text_state_machine,
     stream_generate,
@@ -750,14 +751,12 @@ class ResponseGenerator:
                         rqueue.put(e)
                         continue
 
-                    # Prefer single-sequence MTP when the queue is empty;
-                    # fall back to BatchGenerator when requests are queued.
-                    mtp_active = getattr(self.cli_args, "mtp", False) and hasattr(
-                        model, "mtp_forward"
+                    # Native MTP is currently single-sequence only. Keep routing
+                    # deterministic instead of racing a best-effort queue check.
+                    mtp_active = getattr(self.cli_args, "mtp", False) and (
+                        _model_supports_mtp(model)
                     )
-                    if not self._is_batchable(args) or (
-                        mtp_active and self.requests.empty()
-                    ):
+                    if not self._is_batchable(args) or mtp_active:
                         self._serve_single((rqueue, request, args))
                         continue
 
@@ -921,6 +920,15 @@ class ResponseGenerator:
             cache, rest = self.prompt_cache.fetch_nearest_cache(
                 self.model_provider.model_key, prompt
             )
+            mtp_active = getattr(self.cli_args, "mtp", False) and (
+                _model_supports_mtp(model)
+            )
+            # Legacy entries contain only backbone state. They cannot be paired
+            # safely with a fresh MTP cache, so rebuild once. The cache stored after
+            # this request contains both aligned components.
+            if mtp_active and cache is not None and len(cache) == len(model.layers):
+                cache = None
+                rest = prompt
             ctx.prompt_cache_count = len(prompt) - len(rest)
             cache_key = prompt[:]
             if cache is None:
