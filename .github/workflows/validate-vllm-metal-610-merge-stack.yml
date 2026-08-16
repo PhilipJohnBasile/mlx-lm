@@ -51,6 +51,19 @@ jobs:
           python -m pip install \
             'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl'
           VLLM_METAL_BUILD_FROM_SOURCE=1 python -m pip install -e '.[dev]'
+          source scripts/lib.sh
+          ensure_metal_toolchain
+          build_native_artifacts
+          python - <<'PY'
+          from vllm_metal.metal.build import METALLIB_NAMES, metallib_path, output_path
+
+          native_extension = output_path()
+          assert native_extension.is_file(), native_extension
+          for name in METALLIB_NAMES:
+              shader_library = metallib_path(name)
+              assert shader_library.is_file(), shader_library
+          print(f'Native extension ready: {native_extension}')
+          PY
           git config user.name 'Philip John Basile'
           git config user.email 'PBasile@Basilecom.com'
 
