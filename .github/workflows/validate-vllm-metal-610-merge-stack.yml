@@ -1,0 +1,212 @@
+name: Validate vLLM Metal 610 merge stack
+
+on:
+  push:
+    branches:
+      - stack/vllm-metal-610-merge-ready
+    paths:
+      - downstream/vllm-metal-610/**
+      - .github/workflows/validate-vllm-metal-610-merge-stack.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vllm-metal-610-merge-stack
+  cancel-in-progress: true
+
+jobs:
+  merge-ready-stack:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout patch lab
+        uses: actions/checkout@v5
+        with:
+          ref: stack/vllm-metal-610-merge-ready
+          path: lab
+          fetch-depth: 0
+
+      - name: Checkout pinned vLLM Metal
+        uses: actions/checkout@v5
+        with:
+          repository: vllm-project/vllm-metal
+          ref: 083f581f048b1b4460f166b31ec18dc6ec000e17
+          path: vllm-metal
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Apple-Silicon unit-test environment
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          python -m pip install --upgrade pip uv
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install \
+            'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl'
+          python -m pip install -e '.[dev]'
+          git config user.name 'Philip John Basile'
+          git config user.email 'PBasile@Basilecom.com'
+
+      - name: Phase 1 — plan scheduler-owned speculative GDN state
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain_v2.py
+          files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
+          if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
+          git diff --check
+          pytest -q \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_turboquant_hybrid_sizing.py \
+            tests/test_platform.py
+          git add -A
+          git commit -m 'feat: plan scheduler-owned speculative GDN state'
+
+      - name: Phase 2 — produce a GDN checkpoint after every verify token
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/apply_phase2_state_production.py
+          files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
+          if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
+          git diff --check
+          pytest -q \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_turboquant_hybrid_sizing.py \
+            tests/test_platform.py
+          git add -A
+          git commit -m 'feat: snapshot GDN state after each verify token'
+
+      - name: Phase 3 — promote verifier-selected GDN state
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/apply_phase3_verifier_commit.py
+          files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
+          if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
+          git diff --check
+          pytest -q \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_v1_model_runner_generate.py \
+            tests/test_turboquant_hybrid_sizing.py \
+            tests/test_platform.py
+          git add -A
+          git commit -m 'feat: commit the verifier-selected GDN checkpoint'
+
+      - name: Phase 4 — install native Qwen MTP proposer
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/apply_phase4_adapter.py
+          python ../lab/downstream/vllm-metal-610/apply_phase4_proposer.py
+          python ../lab/downstream/vllm-metal-610/apply_phase4_runner.py
+          cp ../lab/downstream/vllm-metal-610/test_qwen_native_mtp_proposer.py \
+             tests/test_qwen_native_mtp_proposer.py
+          files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
+          if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
+          git diff --check
+          pytest -q \
+            tests/test_qwen_native_mtp_proposer.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_v1_model_runner_generate.py \
+            tests/test_turboquant_hybrid_sizing.py \
+            tests/test_platform.py
+          git add -A
+          git commit -m 'feat: add the trained native Qwen MTP proposer'
+
+      - name: Phase 5 — add scheduler-owned paged MTP prefix transaction
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/apply_phase5_runtime.py
+          python ../lab/downstream/vllm-metal-610/apply_phase5_cache_policy.py
+          python ../lab/downstream/vllm-metal-610/apply_phase5_proposer.py
+          python ../lab/downstream/vllm-metal-610/apply_phase5_runner.py
+          cp ../lab/downstream/vllm-metal-610/test_qwen_native_mtp_proposer_phase5.py \
+             tests/test_qwen_native_mtp_proposer.py
+          cp ../lab/downstream/vllm-metal-610/test_qwen_mtp_paged_cache.py \
+             tests/test_qwen_mtp_paged_cache.py
+          files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
+          if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
+          git diff --check
+          pytest -q \
+            tests/test_qwen_native_mtp_proposer.py \
+            tests/test_qwen_mtp_paged_cache.py \
+            tests/test_spec_decode_metadata.py \
+            tests/test_paged_prefix_caching.py \
+            tests/test_kv_cache_spec_capacity.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_gdn_lazy_wrapper.py \
+            tests/test_v1_model_runner_generate.py \
+            tests/test_turboquant_hybrid_sizing.py \
+            tests/test_platform.py
+          git add -A
+          git commit -m 'feat: cache native Qwen MTP state with hybrid prefixes'
+
+      - name: Repository-wide lint and type gate
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          ruff check .
+          ruff format --check .
+          mypy vllm_metal
+          git diff --check
+
+      - name: Full non-slow unit suite
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          pytest -m 'not slow' tests/ -q --tb=short
+
+      - name: Export five independent merge patches
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          python ../lab/downstream/vllm-metal-610/export_merge_ready_stack.py
+          git diff --binary \
+            083f581f048b1b4460f166b31ec18dc6ec000e17..HEAD \
+            > ../lab/downstream/vllm-metal-610/phase5-paged-mtp-transaction.patch
+          git diff --stat \
+            083f581f048b1b4460f166b31ec18dc6ec000e17..HEAD \
+            > ../lab/downstream/vllm-metal-610/phase5-paged-mtp-transaction.stat
+          git log --reverse --format='%H %s' \
+            083f581f048b1b4460f166b31ec18dc6ec000e17..HEAD \
+            > ../lab/downstream/vllm-metal-610/stack/commits.txt
+          test -s ../lab/downstream/vllm-metal-610/phase5-paged-mtp-transaction.patch
+          test "$(wc -l < ../lab/downstream/vllm-metal-610/stack/series)" -eq 5
+
+      - name: Publish validated stack
+        shell: bash
+        working-directory: lab
+        run: |
+          git config user.name 'Philip John Basile'
+          git config user.email 'PBasile@Basilecom.com'
+          git add downstream/vllm-metal-610/stack \
+                  downstream/vllm-metal-610/phase5-paged-mtp-transaction.patch \
+                  downstream/vllm-metal-610/phase5-paged-mtp-transaction.stat
+          if git diff --cached --quiet; then
+            echo 'No generated stack changes to publish'
+            exit 0
+          fi
+          git commit -m 'build: publish validated five-phase vLLM Metal stack'
+          git fetch origin stack/vllm-metal-610-merge-ready
+          git rebase origin/stack/vllm-metal-610-merge-ready
+          git push origin HEAD:stack/vllm-metal-610-merge-ready
