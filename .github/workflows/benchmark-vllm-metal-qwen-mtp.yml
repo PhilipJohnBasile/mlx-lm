@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 90
     env:
       MODEL_SOURCE: Qwen/Qwen3.5-2B
-      MODEL_DIR: ${{ runner.temp }}/qwen35-2b-mtp-4bit
+      MODEL_DIR: /tmp/qwen35-2b-mtp-4bit
       VLLM_METAL_USE_PAGED_ATTENTION: "1"
       PYTHONUNBUFFERED: "1"
     steps:
@@ -56,9 +56,6 @@ jobs:
           python -m pip install \
             'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl'
           VLLM_METAL_BUILD_FROM_SOURCE=1 python -m pip install -e '.[dev]'
-          # Override the old downstream pin only inside this benchmark environment.
-          # This checkout contains the same hardened MTP implementation proposed in
-          # ml-explore/mlx-lm#1740; the PR itself remains blocked on the real merge SHA.
           python -m pip install --no-deps -e ../mlx-lm
           source scripts/lib.sh
           ensure_metal_toolchain
@@ -99,7 +96,6 @@ jobs:
           assert int(text.get('mtp_num_hidden_layers', 0)) == 1
           print('native MTP checkpoint verified:', model_dir)
           PY
-          # Keep the converted ~4-bit checkpoint but remove the source snapshot.
           rm -rf "$HOME/.cache/huggingface/hub/models--Qwen--Qwen3.5-2B" || true
           df -h .
 
@@ -110,13 +106,9 @@ jobs:
           cat > /tmp/bench_mtp.py <<'PY'
           import argparse
           import json
-          import math
-          import os
-          import re
           import statistics
           import time
           import urllib.request
-
           from transformers import AutoTokenizer
 
           def post_stream(url, payload, tokenizer):
@@ -146,12 +138,8 @@ jobs:
               if first is None:
                   first = end
               n_tokens = len(tokenizer.encode(text, add_special_tokens=False))
-              return {
-                  'ttft_s': first - start,
-                  'latency_s': end - start,
-                  'decode_s': max(end - first, 1e-9),
-                  'output_tokens': n_tokens,
-              }
+              return {'ttft_s': first-start, 'latency_s': end-start,
+                      'decode_s': max(end-first, 1e-9), 'output_tokens': n_tokens}
 
           def metrics(base_url):
               try:
@@ -163,11 +151,7 @@ jobs:
           def counter(text, stem):
               total = 0.0
               for line in text.splitlines():
-                  if line.startswith('#'):
-                      continue
-                  if not line.startswith(stem):
-                      continue
-                  if '_created' in line:
+                  if line.startswith('#') or not line.startswith(stem) or '_created' in line:
                       continue
                   try:
                       total += float(line.rsplit(' ', 1)[1])
@@ -183,27 +167,15 @@ jobs:
           p.add_argument('--max-tokens', type=int, default=128)
           p.add_argument('--out', required=True)
           a = p.parse_args()
-
           tok = AutoTokenizer.from_pretrained(a.model, trust_remote_code=True)
-          # A long shared prefix makes prefix caching part of both A/B cases;
-          # only a short suffix changes per request.
           seed = ('Apple Silicon inference benchmark. Explain carefully and precisely. ' * 180)
           seed_ids = tok.encode(seed, add_special_tokens=False)
           if len(seed_ids) > 1024:
               seed = tok.decode(seed_ids[:1024])
           prompts = [seed + f'\nCase {i}: give a concise technical explanation of speculative decoding.' for i in range(a.requests)]
-
           endpoint = a.base_url + '/v1/completions'
-          common = {
-              'model': a.model,
-              'max_tokens': a.max_tokens,
-              'temperature': 0,
-              'stream': True,
-          }
-
-          # Warm model kernels and populate the shared prefix once; do not score warmup.
-          warm = dict(common, prompt=prompts[0], max_tokens=32)
-          post_stream(endpoint, warm, tok)
+          common = {'model': a.model, 'max_tokens': a.max_tokens, 'temperature': 0, 'stream': True}
+          post_stream(endpoint, dict(common, prompt=prompts[0], max_tokens=32), tok)
           before = metrics(a.base_url)
           rows = []
           wall0 = time.perf_counter()
@@ -211,36 +183,24 @@ jobs:
               rows.append(post_stream(endpoint, dict(common, prompt=prompt), tok))
           wall = time.perf_counter() - wall0
           after = metrics(a.base_url)
-
           total_out = sum(r['output_tokens'] for r in rows)
           total_decode = sum(r['decode_s'] for r in rows)
-          draft0 = counter(before, 'vllm:spec_decode_num_draft_tokens_total')
-          draft1 = counter(after, 'vllm:spec_decode_num_draft_tokens_total')
-          acc0 = counter(before, 'vllm:spec_decode_num_accepted_tokens_total')
-          acc1 = counter(after, 'vllm:spec_decode_num_accepted_tokens_total')
-          drafts = max(0.0, draft1 - draft0)
-          accepted = max(0.0, acc1 - acc0)
-          acceptance = (100.0 * accepted / drafts) if drafts else None
+          drafts = max(0.0, counter(after, 'vllm:spec_decode_num_draft_tokens_total') - counter(before, 'vllm:spec_decode_num_draft_tokens_total'))
+          accepted = max(0.0, counter(after, 'vllm:spec_decode_num_accepted_tokens_total') - counter(before, 'vllm:spec_decode_num_accepted_tokens_total'))
           result = {
-              'label': a.label,
-              'model': a.model,
-              'requests': a.requests,
+              'label': a.label, 'model': a.model, 'requests': a.requests,
               'shared_prompt_tokens': len(tok.encode(seed, add_special_tokens=False)),
-              'max_output_tokens': a.max_tokens,
-              'output_tokens': total_out,
-              'wall_s': wall,
+              'max_output_tokens': a.max_tokens, 'output_tokens': total_out, 'wall_s': wall,
               'output_tok_s': total_out / total_decode if total_decode else 0.0,
               'end_to_end_tok_s': total_out / wall if wall else 0.0,
               'mean_ttft_ms': 1000 * statistics.mean(r['ttft_s'] for r in rows),
               'median_ttft_ms': 1000 * statistics.median(r['ttft_s'] for r in rows),
               'mean_latency_ms': 1000 * statistics.mean(r['latency_s'] for r in rows),
-              'mtp_drafted_tokens': drafts,
-              'mtp_accepted_tokens': accepted,
-              'mtp_acceptance_pct': acceptance,
+              'mtp_drafted_tokens': drafts, 'mtp_accepted_tokens': accepted,
+              'mtp_acceptance_pct': (100.0 * accepted / drafts) if drafts else None,
               'rows': rows,
           }
-          with open(a.out, 'w') as f:
-              json.dump(result, f, indent=2)
+          with open(a.out, 'w') as f: json.dump(result, f, indent=2)
           print('BENCH_RESULT=' + json.dumps(result, sort_keys=True))
           PY
 
@@ -251,10 +211,8 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
           rm -f /tmp/vllm-baseline.log
-          vllm serve "$MODEL_DIR" \
-            --host 127.0.0.1 --port 8000 \
-            --enable-prefix-caching \
-            --max-model-len 4096 \
+          vllm serve "$MODEL_DIR" --host 127.0.0.1 --port 8000 \
+            --enable-prefix-caching --max-model-len 4096 \
             > /tmp/vllm-baseline.log 2>&1 &
           pid=$!
           trap 'kill $pid 2>/dev/null || true; tail -200 /tmp/vllm-baseline.log || true' EXIT
@@ -264,9 +222,7 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:8000/health >/dev/null
-          python /tmp/bench_mtp.py \
-            --label baseline --model "$MODEL_DIR" \
-            --out /tmp/baseline.json
+          python /tmp/bench_mtp.py --label baseline --model "$MODEL_DIR" --out /tmp/baseline.json
           kill $pid
           wait $pid || true
           trap - EXIT
@@ -279,10 +235,8 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
           rm -f /tmp/vllm-mtp.log
-          vllm serve "$MODEL_DIR" \
-            --host 127.0.0.1 --port 8000 \
-            --enable-prefix-caching \
-            --max-model-len 4096 \
+          vllm serve "$MODEL_DIR" --host 127.0.0.1 --port 8000 \
+            --enable-prefix-caching --max-model-len 4096 \
             --speculative-config '{"method":"mtp","num_speculative_tokens":1}' \
             > /tmp/vllm-mtp.log 2>&1 &
           pid=$!
@@ -293,9 +247,7 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:8000/health >/dev/null
-          python /tmp/bench_mtp.py \
-            --label mtp --model "$MODEL_DIR" \
-            --out /tmp/mtp.json
+          python /tmp/bench_mtp.py --label mtp --model "$MODEL_DIR" --out /tmp/mtp.json
           kill $pid
           wait $pid || true
           trap - EXIT
@@ -307,22 +259,16 @@ jobs:
         run: |
           python - <<'PY'
           import json, os
-          paths = ['/tmp/baseline.json', '/tmp/mtp.json']
-          data = []
-          for p in paths:
-              if os.path.exists(p):
-                  data.append(json.load(open(p)))
+          data = [json.load(open(p)) for p in ['/tmp/baseline.json','/tmp/mtp.json'] if os.path.exists(p)]
           out = {'hardware':'GitHub macos-15 arm64 Apple Silicon', 'results':data}
           if len(data) == 2:
               b, m = data
               out['speedup_output'] = m['output_tok_s'] / b['output_tok_s'] if b['output_tok_s'] else None
               out['speedup_end_to_end'] = m['end_to_end_tok_s'] / b['end_to_end_tok_s'] if b['end_to_end_tok_s'] else None
               out['ttft_ratio'] = m['mean_ttft_ms'] / b['mean_ttft_ms'] if b['mean_ttft_ms'] else None
-          with open('/tmp/serving-benchmark.json','w') as f:
-              json.dump(out, f, indent=2)
+          with open('/tmp/serving-benchmark.json','w') as f: json.dump(out, f, indent=2)
           print(json.dumps(out, indent=2))
           PY
-          cat /tmp/serving-benchmark.json
 
       - name: Upload benchmark evidence
         if: always()
