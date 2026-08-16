@@ -38,6 +38,8 @@ jobs:
           python3 -m py_compile work/vllm-metal/tools/apply_gdn_spec_blocks.py
           cd work/vllm-metal
           python3 tools/apply_gdn_spec_blocks.py
+          cp tools/apply_gdn_spec_blocks.py ../vllm-metal-gdn-spec-blocks-apply.py
+          rm tools/apply_gdn_spec_blocks.py
           git diff --check
           python3 -m compileall -q \
             vllm_metal/attention \
@@ -76,5 +78,5 @@ jobs:
             work/vllm-metal-gdn-spec-blocks.patch
             work/vllm-metal-gdn-spec-blocks-lint.log
             work/vllm-metal-gdn-spec-blocks-tests.log
-            work/vllm-metal/tools/apply_gdn_spec_blocks.py
+            work/vllm-metal-gdn-spec-blocks-apply.py
           if-no-files-found: warn
