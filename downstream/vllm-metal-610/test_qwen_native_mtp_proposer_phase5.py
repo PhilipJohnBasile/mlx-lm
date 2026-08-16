@@ -38,6 +38,7 @@ class _FakePagedRuntime:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
         self.boundaries: dict[int, mx.array] = {}
+        self.boundary_reads: list[int] = []
         self.fail_boundary = False
 
     def supports_hybrid_speculative_decode(self) -> bool:
@@ -45,6 +46,7 @@ class _FakePagedRuntime:
 
     def qwen_mtp_boundary_hidden(self, block_ids_by_group, token_position):
         assert len(block_ids_by_group) == 2
+        self.boundary_reads.append(token_position)
         if self.fail_boundary or token_position not in self.boundaries:
             raise RuntimeError("missing boundary")
         return self.boundaries[token_position]
@@ -221,7 +223,7 @@ class TestQwenNativeMTPProposerPagedTransaction:
         proposer.release_requests({"r0"})
         assert "r0" not in proposer._states
 
-    def test_scheduler_prefix_hit_restores_boundary_and_mtp_lag(self) -> None:
+    def test_scheduler_prefix_hit_resumes_after_eagle_recompute_boundary(self) -> None:
         runtime = _FakePagedRuntime()
         runtime.boundaries[99] = _hidden(99)
         proposer = QwenNativeMTPProposer(_runner(runtime=runtime))
@@ -239,11 +241,15 @@ class TestQwenNativeMTPProposerPagedTransaction:
         )
         assert result is not None
         assert result.draft_token_ids == [[39]]  # (102 + 1) % 64
+        assert runtime.boundary_reads == [99]
+        # The retained MTP shared tail is not overwritten at position 99. The
+        # EAGLE-dropped suffix recomputes target hidden 100 first, then MTP
+        # resumes at logical position 100.
         assert [(c["start_pos"], c["tokens"]) for c in runtime.calls] == [
-            (99, [100, 101]),
+            (100, [101]),
             (101, [102]),
         ]
-        assert runtime.calls[0]["hidden"] == [99.0, 100.0]
+        assert runtime.calls[0]["hidden"] == [100.0]
         assert "hit" not in proposer._prefix_hit_blocked
 
     def test_missing_boundary_fails_closed_without_fresh_mtp_state(self) -> None:
