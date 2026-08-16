@@ -10,11 +10,11 @@ the final scheduler-owned MTP prefix-cache transaction.
 
 | Phase | Review document | Commit | Patch |
 |---:|---|---|---|
-| 1 | [Hybrid GDN speculative state-chain planning](PR-01.md) | `fe50d5c8b43e` | `0001-hybrid-gdn-speculative-state-chain.patch` |
-| 2 | [Per-token GDN convolution and recurrent snapshots](PR-02.md) | `fae87656076c` | `0002-gdn-per-token-state-snapshots.patch` |
-| 3 | [Verifier-selected GDN state promotion](PR-03.md) | `08f03322e00a` | `0003-verifier-promotes-gdn-state.patch` |
-| 4 | [Native Qwen MTP proposer and hidden-state contract](PR-04.md) | `1602240c1a62` | `0004-native-qwen-mtp-proposer.patch` |
-| 5 | [Scheduler-owned paged Qwen MTP prefix transaction](PR-05.md) | `c4df7f48b177` | `0005-paged-qwen-mtp-prefix-transaction.patch` |
+| 1 | [Hybrid GDN speculative state-chain planning](PR-01.md) | `62850fd729c1` | `0001-hybrid-gdn-speculative-state-chain.patch` |
+| 2 | [Per-token GDN convolution and recurrent snapshots](PR-02.md) | `37bccdfa877a` | `0002-gdn-per-token-state-snapshots.patch` |
+| 3 | [Verifier-selected GDN state promotion](PR-03.md) | `8d8a022dfe86` | `0003-verifier-promotes-gdn-state.patch` |
+| 4 | [Native Qwen MTP proposer and hidden-state contract](PR-04.md) | `0c7e677098ec` | `0004-native-qwen-mtp-proposer.patch` |
+| 5 | [Scheduler-owned paged Qwen MTP prefix transaction](PR-05.md) | `43e83bd80432` | `0005-paged-qwen-mtp-prefix-transaction.patch` |
 
 ## Apply the complete series
 

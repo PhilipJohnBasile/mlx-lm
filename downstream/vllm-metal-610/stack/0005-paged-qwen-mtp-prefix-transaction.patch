@@ -1,6 +1,6 @@
-From c4df7f48b177365e55ebf012502582985c5da9cf Mon Sep 17 00:00:00 2001
+From 43e83bd80432455da015bcabdd7496ab954685b4 Mon Sep 17 00:00:00 2001
 From: Philip John Basile <PBasile@Basilecom.com>
-Date: Sun, 16 Aug 2026 06:53:26 +0000
+Date: Sun, 16 Aug 2026 13:27:25 +0000
 Subject: [PATCH] feat: cache native Qwen MTP state with hybrid prefixes
 
 ---

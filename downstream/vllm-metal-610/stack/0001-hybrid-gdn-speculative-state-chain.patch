@@ -1,6 +1,6 @@
-From fe50d5c8b43e29402fd786e0ebf5d249296fff72 Mon Sep 17 00:00:00 2001
+From 62850fd729c1c1a525f3f3b9428ab557005ff3cf Mon Sep 17 00:00:00 2001
 From: Philip John Basile <PBasile@Basilecom.com>
-Date: Sun, 16 Aug 2026 06:52:26 +0000
+Date: Sun, 16 Aug 2026 13:26:39 +0000
 Subject: [PATCH] feat: plan scheduler-owned speculative GDN state
 
 ---

@@ -1,6 +1,6 @@
-From 1602240c1a62d4bae7b059aa69daefea3c83fc34 Mon Sep 17 00:00:00 2001
+From 0c7e677098ec97ed0c24738b41d989647345eba1 Mon Sep 17 00:00:00 2001
 From: Philip John Basile <PBasile@Basilecom.com>
-Date: Sun, 16 Aug 2026 06:53:11 +0000
+Date: Sun, 16 Aug 2026 13:27:15 +0000
 Subject: [PATCH] feat: add the trained native Qwen MTP proposer
 
 ---
