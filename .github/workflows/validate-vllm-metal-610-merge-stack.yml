@@ -18,7 +18,7 @@ concurrency:
 jobs:
   merge-ready-stack:
     if: github.actor != 'github-actions[bot]'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - name: Checkout patch lab
@@ -66,6 +66,36 @@ jobs:
           PY
           git config user.name 'Philip John Basile'
           git config user.email 'PBasile@Basilecom.com'
+
+      - name: Verify raw MPS and MLX bridge availability
+        shell: bash
+        working-directory: vllm-metal
+        run: |
+          source .venv/bin/activate
+          unset PYTORCH_MPS_HIGH_WATERMARK_RATIO
+          python - <<'PY'
+          import torch
+
+          assert torch.backends.mps.is_built(), 'PyTorch was not built with MPS'
+          assert torch.backends.mps.is_available(), 'MPS is not available'
+          raw = torch.tensor([1.0, 2.0, 3.0], device='mps')
+          torch.mps.synchronize()
+          assert raw.device.type == 'mps'
+          print('Raw PyTorch MPS allocation passed')
+          PY
+          python - <<'PY'
+          import mlx.core as mx
+          import torch
+
+          from vllm_metal.pytorch_backend.tensor_bridge import mlx_to_torch
+
+          source = mx.array([1.0, 2.0, 3.0], dtype=mx.float32)
+          mx.eval(source)
+          bridged = mlx_to_torch(source, device='mps')
+          torch.mps.synchronize()
+          assert bridged.device.type == 'mps'
+          print('MLX-to-PyTorch MPS bridge passed')
+          PY
 
       - name: Phase 1 — plan scheduler-owned speculative GDN state
         shell: bash
@@ -220,8 +250,6 @@ jobs:
         working-directory: vllm-metal
         run: |
           source .venv/bin/activate
-          # PyTorch 2.13 on the hosted arm64 runner treats a zero MPS high-water
-          # ratio as a zero allocation ceiling. Use its default allocator limit.
           unset PYTORCH_MPS_HIGH_WATERMARK_RATIO
           # MLX and PyTorch MPS share unified memory. Run the bridge module in a
           # dedicated process and the remaining tests in another process. Their
