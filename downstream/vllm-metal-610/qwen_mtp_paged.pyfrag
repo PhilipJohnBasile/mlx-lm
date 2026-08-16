@@ -5,13 +5,12 @@ The target hybrid runtime owns three pieces of speculative state:
 
 * the ordinary target SDPA/GDN state;
 * a dedicated, scheduler-addressed MTP-head KV cache;
-* a shadow cache of target pre-norm hidden states indexed by the target
-  full-attention block table.
+* one target pre-norm hidden-state checkpoint per completed target cache block.
 
-The MTP group is an EAGLE-style cache group and therefore trails the target by
-one token at a reusable prefix boundary.  The boundary-hidden shadow shares the
-target group's block lifecycle, so a prefix hit can close that intentional lag
-without combining restored target state with a fresh MTP cache.
+The MTP group is an EAGLE-style cache group and therefore recomputes a full
+hash unit on a reusable prefix hit. The boundary checkpoint shares the target
+block lifecycle and validates that warm-prefix drafting never combines restored
+target state with a fresh or incomplete MTP cache.
 """
 
 from __future__ import annotations
@@ -66,7 +65,14 @@ KVCacheSpecRegistry.register(
 
 
 class QwenMTPBoundaryHiddenCache:
-    """Pre-final-norm target hidden states keyed by target scheduler slots."""
+    """One pre-final-norm hidden checkpoint per completed target block.
+
+    Prefix-cache adoption is block-aligned. EAGLE drops one hash unit and
+    recomputes it, so only the hidden state at the end of the retained target
+    block is durable state. Keeping one vector per block avoids multiplying the
+    memory cost by ``block_size`` while retaining an exact, fail-closed lineage
+    check.
+    """
 
     def __init__(
         self,
@@ -82,15 +88,13 @@ class QwenMTPBoundaryHiddenCache:
         self.block_size = block_size
         self.hidden_size = hidden_size
         self.dtype = dtype
-        self.cache = mx.zeros(
-            (num_blocks, block_size, hidden_size),
-            dtype=dtype,
-        )
-        mx.eval(self.cache)
+        self.cache = mx.zeros((num_blocks, hidden_size), dtype=dtype)
+        self.valid = mx.zeros((num_blocks,), dtype=mx.uint8)
+        mx.eval(self.cache, self.valid)
 
     @property
     def bytes_per_block(self) -> int:
-        return self.block_size * self.hidden_size * self.dtype.size
+        return self.hidden_size * self.dtype.size + mx.uint8.size
 
     def store(self, slot_mapping: Sequence[int], hidden_states: mx.array) -> None:
         hidden_states = hidden_states.reshape(-1, self.hidden_size)
@@ -106,14 +110,42 @@ class QwenMTPBoundaryHiddenCache:
         max_slot = self.num_blocks * self.block_size
         if any(slot >= max_slot for slot in slot_mapping):
             raise RuntimeError("Qwen MTP boundary cache slot is out of range")
-        slots = mx.array(slot_mapping, dtype=mx.int32)
-        block_ids = slots // self.block_size
-        offsets = slots % self.block_size
-        self.cache[block_ids, offsets] = hidden_states.astype(self.dtype)
+
+        # A write to offset zero begins a new physical block lifetime. Clear a
+        # previous occupant's boundary marker before the block can be cached.
+        clear_blocks = sorted(
+            {
+                slot // self.block_size
+                for slot in slot_mapping
+                if slot % self.block_size == 0
+            }
+        )
+        if clear_blocks:
+            clear_ids = mx.array(clear_blocks, dtype=mx.int32)
+            self.valid[clear_ids] = mx.zeros((len(clear_blocks),), dtype=mx.uint8)
+
+        boundary_rows = [
+            row
+            for row, slot in enumerate(slot_mapping)
+            if slot % self.block_size == self.block_size - 1
+        ]
+        if not boundary_rows:
+            return
+        block_ids = mx.array(
+            [slot_mapping[row] // self.block_size for row in boundary_rows],
+            dtype=mx.int32,
+        )
+        row_ids = mx.array(boundary_rows, dtype=mx.int32)
+        self.cache[block_ids] = hidden_states[row_ids].astype(self.dtype)
+        self.valid[block_ids] = mx.ones((len(boundary_rows),), dtype=mx.uint8)
 
     def read(self, block_ids: Sequence[int], token_position: int) -> mx.array:
         if token_position < 0:
             raise RuntimeError("Qwen MTP boundary token position must be non-negative")
+        if token_position % self.block_size != self.block_size - 1:
+            raise RuntimeError(
+                "Qwen MTP warm-prefix boundary is not target-block aligned"
+            )
         block_index = token_position // self.block_size
         if block_index >= len(block_ids):
             raise RuntimeError(
@@ -122,8 +154,13 @@ class QwenMTPBoundaryHiddenCache:
         block_id = int(block_ids[block_index])
         if block_id < 0 or block_id >= self.num_blocks:
             raise RuntimeError("Qwen MTP boundary block id is out of range")
-        offset = token_position % self.block_size
-        value = self.cache[block_id, offset : offset + 1]
+        valid = self.valid[block_id]
+        mx.eval(valid)
+        if int(valid.item()) != 1:
+            raise RuntimeError(
+                "Qwen MTP target prefix has no valid boundary-hidden checkpoint"
+            )
+        value = self.cache[block_id : block_id + 1]
         mx.eval(value)
         return value
 
@@ -141,6 +178,7 @@ class QwenMTPBoundaryHiddenCache:
         src = mx.array(src_ids, dtype=mx.int32)
         dst = mx.array(dst_ids, dtype=mx.int32)
         self.cache[dst] = self.cache[src]
+        self.valid[dst] = self.valid[src]
 
 
 class QwenMTPPagedState:
@@ -330,7 +368,7 @@ class QwenMTPPagedState:
 
     def extend_forward_eval_outputs(self, outputs: list[mx.array]) -> None:
         if self.boundary_cache is not None:
-            outputs.append(self.boundary_cache.cache)
+            outputs.extend([self.boundary_cache.cache, self.boundary_cache.valid])
 
     def _require_ready(self) -> None:
         if not self.ready:
