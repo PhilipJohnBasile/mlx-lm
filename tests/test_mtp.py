@@ -1,4 +1,5 @@
 import importlib
+import itertools
 import unittest
 
 import mlx.core as mx
@@ -43,6 +44,32 @@ def _make_qwen3_5_mtp_model():
     return model
 
 
+def _make_qwen3_5_moe_mtp_model():
+    module = importlib.import_module("mlx_lm.models.qwen3_5_moe")
+    args = module.ModelArgs.from_dict(
+        {
+            "model_type": "qwen3_5_moe",
+            "text_config": {
+                "model_type": "qwen3_5_moe",
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "vocab_size": 64,
+                "full_attention_interval": 1,
+                "head_dim": 8,
+                "num_experts": 2,
+                "num_experts_per_tok": 1,
+                "moe_intermediate_size": 16,
+                "shared_expert_intermediate_size": 16,
+                "mtp_num_hidden_layers": 1,
+            },
+        }
+    )
+    return module.Model(args)
+
+
 class TestMTP(unittest.TestCase):
     """Tests for native MTP (Multi-Token Prediction) speculative decoding.
 
@@ -72,6 +99,25 @@ class TestMTP(unittest.TestCase):
         mtp_cache = self.model.make_mtp_cache()
         self.assertEqual(len(mtp_cache), 1)
         self.assertTrue(mtp_cache[0].is_trimmable())
+
+    def test_missing_mtp_weights_disable_head(self):
+        model = _make_qwen3_5_mtp_model()
+        self.assertTrue(model.supports_mtp)
+        model.sanitize({})
+        self.assertFalse(model.supports_mtp)
+        self.assertEqual(model.make_mtp_cache(), [])
+
+    def test_missing_mtp_moe_weights_do_not_crash(self):
+        model = _make_qwen3_5_moe_mtp_model()
+        self.assertTrue(model.supports_mtp)
+        model.sanitize({})
+        self.assertFalse(model.supports_mtp)
+
+    def test_mtp_rejects_input_embeddings(self):
+        prompt = mx.array([0, 1], dtype=mx.uint32)
+        embeddings = mx.zeros((2, 64))
+        with self.assertRaisesRegex(ValueError, "input_embeddings"):
+            next(mtp_generate_step(prompt, self.model, input_embeddings=embeddings))
 
     def test_return_hidden(self):
         """return_hidden=True should return (logits, hidden) with correct shapes."""
@@ -161,6 +207,56 @@ class TestMTP(unittest.TestCase):
                 if len(tokens) >= n_tokens:
                     break
             self.assertEqual(len(tokens), n_tokens, f"kwargs={kwargs}")
+
+    def test_mtp_infinite_max_tokens(self):
+        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+        tokens = list(
+            itertools.islice(
+                mtp_generate_step(prompt, self.model, max_tokens=-1),
+                3,
+            )
+        )
+        self.assertEqual(len(tokens), 3)
+
+    def test_mtp_extends_fresh_prompt_cache(self):
+        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+        prompt_cache = make_prompt_cache(self.model)
+        n_main = len(prompt_cache)
+        next(
+            mtp_generate_step(
+                prompt,
+                self.model,
+                max_tokens=1,
+                prompt_cache=prompt_cache,
+            )
+        )
+        self.assertEqual(len(prompt_cache), n_main + 1)
+
+    def test_mtp_rejects_unaligned_populated_prompt_cache(self):
+        prompt_cache = make_prompt_cache(self.model)
+        self.model(mx.array([[0, 1]], dtype=mx.uint32), cache=prompt_cache)
+        with self.assertRaisesRegex(ValueError, "aligned MTP cache"):
+            next(
+                mtp_generate_step(
+                    mx.array([2, 3], dtype=mx.uint32),
+                    self.model,
+                    prompt_cache=prompt_cache,
+                )
+            )
+
+    def test_mtp_rejects_stateful_logits_processor(self):
+        class StatefulProcessor:
+            def __call__(self, tokens, logits):
+                return logits
+
+        with self.assertRaisesRegex(ValueError, "stateless logits processors"):
+            next(
+                mtp_generate_step(
+                    mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                    self.model,
+                    logits_processors=[StatefulProcessor()],
+                )
+            )
 
     def test_mtp_generate_identity_with_logits_processor(self):
         """mtp_generate_step must produce the same greedy tokens as generate_step

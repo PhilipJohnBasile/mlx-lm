@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import copy
+import inspect
 import json
 import math
 import sys
@@ -317,6 +318,19 @@ def validate_prompt_and_embeddings(model, prompt, input_embeddings):
         raise ValueError(
             "Either input_embeddings or prompt (or both) must be provided."
         )
+
+
+def _model_supports_mtp(model):
+    # Detect a loaded native MTP head without relying on method presence alone.
+    supported = getattr(model, "supports_mtp", None)
+    if supported is not None:
+        return bool(supported)
+    if not hasattr(model, "mtp_forward") or not hasattr(model, "make_mtp_cache"):
+        return False
+    try:
+        return len(model.make_mtp_cache()) > 0
+    except (AttributeError, TypeError):
+        return False
 
 
 def generate_step(
@@ -692,20 +706,65 @@ def mtp_generate_step(
         Tuple[mx.array, mx.array, bool]: (token, log-probabilities, from_draft).
             ``from_draft`` is ``True`` when the token came from the MTP head.
     """
+    if input_embeddings is not None:
+        raise ValueError(
+            "Native MTP generation does not yet support input_embeddings. "
+            "Use standard generation for embedding or multimodal inputs."
+        )
     validate_prompt_and_embeddings(model, prompt, input_embeddings)
+
+    if logits_processors:
+        unsafe_processors = [
+            type(processor).__name__
+            for processor in logits_processors
+            if not inspect.isfunction(processor)
+            and not isinstance(processor, partial)
+            and not getattr(processor, "is_stateless", False)
+        ]
+        if unsafe_processors:
+            names = ", ".join(unsafe_processors)
+            raise ValueError(
+                "Native MTP currently supports only stateless logits processors. "
+                "Use plain functions, functools.partial, or set is_stateless=True "
+                f"on a safe callable. Unsupported processor(s): {names}."
+            )
+
+    if not _model_supports_mtp(model):
+        raise ValueError("The model does not have a usable native MTP head.")
 
     y = prompt.astype(mx.uint32)
     prev_tokens = None
+    fresh_mtp_cache = model.make_mtp_cache()
 
     if prompt_cache is None:
         model_cache = cache.make_prompt_cache(model)
-        mtp_cache = model.make_mtp_cache()
+        mtp_cache = fresh_mtp_cache
     else:
-        # Split a pre-built cache at backbone length.  If MTP entries are
-        # absent (e.g. cache created by make_prompt_cache), create them.
         n_main = len(model.layers)
-        model_cache = prompt_cache[:n_main]
-        mtp_cache = prompt_cache[n_main:] or model.make_mtp_cache()
+        if len(prompt_cache) < n_main:
+            raise ValueError(
+                "The supplied prompt_cache has fewer entries than the model backbone."
+            )
+        model_cache = list(prompt_cache[:n_main])
+        mtp_cache = list(prompt_cache[n_main:])
+        if mtp_cache:
+            if len(mtp_cache) != len(fresh_mtp_cache):
+                raise ValueError(
+                    "The supplied prompt_cache contains an incompatible number of "
+                    "MTP cache entries."
+                )
+        else:
+            if any(not c.empty() for c in model_cache):
+                raise ValueError(
+                    "A pre-populated native-MTP prompt_cache must include aligned "
+                    "MTP cache entries. Legacy backbone-only caches cannot be reused."
+                )
+            if not hasattr(prompt_cache, "extend"):
+                raise TypeError(
+                    "prompt_cache must be a mutable sequence for native MTP."
+                )
+            mtp_cache = fresh_mtp_cache
+            prompt_cache.extend(mtp_cache)
 
     _is_greedy = temp == 0
 
@@ -873,7 +932,7 @@ def mtp_generate_step(
     last_cache_block = 0
     draft_tok = draft_lp = draft_accept_lp = draft_xtc_draw = None
 
-    while ntoks < max_tokens:
+    while max_tokens < 0 or ntoks < max_tokens:
         if draft_tok is None:
             # No pending draft: run backbone only, then generate first draft.
             toks, lps, accept_lps, hidden, prev_tokens = _step_backbone(
@@ -883,7 +942,7 @@ def mtp_generate_step(
             main_tok, main_lp = toks[0], lps[0]
             ntoks += 1
             yield main_tok.item(), main_lp, False
-            if ntoks >= max_tokens:
+            if max_tokens >= 0 and ntoks >= max_tokens:
                 return
             hidden_at_main = hidden[:, -1:, :]
             draft_tok, draft_lp, draft_accept_lp, draft_xtc_draw = _step_mtp(
@@ -926,12 +985,12 @@ def mtp_generate_step(
             if accept:
                 _clear_rollback()
                 ntoks += 1
-                yield draft_tok_id, draft_lp, True
-                if ntoks >= max_tokens:
+                yield draft_tok_id, verify_lp, True
+                if max_tokens >= 0 and ntoks >= max_tokens:
                     return
                 ntoks += 1
                 yield bonus_tok.item(), bonus_lp, False
-                if ntoks >= max_tokens:
+                if max_tokens >= 0 and ntoks >= max_tokens:
                     return
                 # Next draft: one batched forward aligns the cache for the
                 # accepted draft token and generates the next draft together.
@@ -964,7 +1023,7 @@ def mtp_generate_step(
                     ).item()
                 ntoks += 1
                 yield verify_tok_id, verify_lp, False
-                if ntoks >= max_tokens:
+                if max_tokens >= 0 and ntoks >= max_tokens:
                     return
                 # Next draft from MTP at y's hidden state.
                 draft_tok, draft_lp, draft_accept_lp, draft_xtc_draw = _step_mtp(
@@ -1041,7 +1100,7 @@ def stream_generate(
         token_generator = speculative_generate_step(
             prompt, model, draft_model, **kwargs
         )
-    elif mtp and hasattr(model, "mtp_forward"):
+    elif mtp and _model_supports_mtp(model):
         kwargs.pop("max_kv_size", None)
         kwargs.pop("prompt_progress_callback", None)
         kwargs.pop("num_draft_tokens", None)
@@ -2552,6 +2611,14 @@ def main():
         draft_model=draft_model,
         num_draft_tokens=args.num_draft_tokens,
         mtp=args.mtp,
+        temp=args.temp,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        min_tokens_to_keep=args.min_tokens_to_keep,
+        xtc_probability=args.xtc_probability,
+        xtc_threshold=args.xtc_threshold,
+        xtc_special_tokens=tokenizer.encode("\n") + list(tokenizer.eos_token_ids),
     )
     if not args.verbose:
         print(response)
