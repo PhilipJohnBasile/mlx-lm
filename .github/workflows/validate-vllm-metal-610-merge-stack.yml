@@ -115,6 +115,8 @@ jobs:
           python ../lab/downstream/vllm-metal-610/apply_phase4_runner.py
           cp ../lab/downstream/vllm-metal-610/test_qwen_native_mtp_proposer.py \
              tests/test_qwen_native_mtp_proposer.py
+          ruff format tests/test_qwen_native_mtp_proposer.py
+          ruff check tests/test_qwen_native_mtp_proposer.py
           files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
           if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
           git diff --check
@@ -141,6 +143,14 @@ jobs:
              tests/test_qwen_native_mtp_proposer.py
           cp ../lab/downstream/vllm-metal-610/test_qwen_mtp_paged_cache.py \
              tests/test_qwen_mtp_paged_cache.py
+          ruff format \
+            vllm_metal/v1/qwen_mtp_paged.py \
+            tests/test_qwen_native_mtp_proposer.py \
+            tests/test_qwen_mtp_paged_cache.py
+          ruff check \
+            vllm_metal/v1/qwen_mtp_paged.py \
+            tests/test_qwen_native_mtp_proposer.py \
+            tests/test_qwen_mtp_paged_cache.py
           files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
           if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
           git diff --check
