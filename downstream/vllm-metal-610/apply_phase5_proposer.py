@@ -11,5 +11,10 @@ new = Path(
 ).read_text()
 # Phase 4 appends the Qwen proposer at the end of proposer.py. Replacing from
 # the stable class marker to EOF survives ruff formatting of the phase-4 commit.
-path.write_text(text[:start] + new)
+text = text[:start] + new
+old_import = "from typing import TYPE_CHECKING, Any, Protocol"
+new_import = "from typing import TYPE_CHECKING, Protocol"
+if text.count(old_import) != 1:
+    raise RuntimeError("phase-5 proposer typing import marker mismatch")
+path.write_text(text.replace(old_import, new_import, 1))
 print("Replaced request-local Qwen MTP proposer with scheduler-owned phase 5.")
