@@ -15,19 +15,55 @@ def replace_once(path: str, old: str, new: str, label: str) -> None:
 fragment = Path(
     "../lab/downstream/vllm-metal-610/qwen_mtp_paged.pyfrag"
 ).read_text()
-registry_marker = "# Register as its own uniform type while reusing the standard"
-if fragment.count(registry_marker) != 1:
-    raise RuntimeError("Qwen MTP registry marker mismatch")
+old_imports = """from vllm.utils.torch_utils import get_dtype_size
+from vllm.v1.core.single_type_kv_cache_manager import FullAttentionManager
+from vllm.v1.kv_cache_interface import MLAAttentionSpec
+from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
+"""
+new_imports = """from vllm.v1.kv_cache_interface import HiddenStateCacheSpec
+"""
+if fragment.count(old_imports) != 1:
+    raise RuntimeError("Qwen MTP cache-spec import marker mismatch")
+fragment = fragment.replace(old_imports, new_imports, 1)
 fragment = fragment.replace(
-    registry_marker,
-    "# Populate vLLM's built-in registry before adding an out-of-tree spec.\n"
-    "# Registering the custom type into an empty registry would otherwise make\n"
-    "# _ensure_registered() treat the registry as complete and skip the normal\n"
-    "# FullAttention/Mamba registrations.\n"
-    "KVCacheSpecRegistry._ensure_registered()\n\n"
-    + registry_marker,
+    "class QwenMTPAttentionSpec(MLAAttentionSpec):",
+    "class QwenMTPAttentionSpec(HiddenStateCacheSpec):",
     1,
 )
+old_spec_body = """    Subclassing ``MLAAttentionSpec`` prevents vLLM's generic
+    ``FullAttentionSpec.merge`` from folding this layer into the target SDPA
+    group.  The physical format remains ordinary K+V and is reported exactly
+    by the override below.
+    \"\"\"
+
+    @property
+    def real_page_size_bytes(self) -> int:
+        return (
+            self.block_size
+            * self.num_kv_heads
+            * (self.head_size + self.head_size_v)
+            * get_dtype_size(self.dtype)
+        )
+
+
+"""
+new_spec_body = """    The cache-only marker makes vLLM pull this layer out before hybrid
+    grouping, so a single MTP layer does not collapse every target/GDN group to
+    size one. ``num_kv_heads`` is reported as combined K+V head slots; the
+    inherited latent-page byte formula therefore equals the physical dense
+    K+V page owned by :class:`MetalPagedKVCache`.
+    \"\"\"
+
+
+"""
+if fragment.count(old_spec_body) != 1:
+    raise RuntimeError("Qwen MTP cache-spec body marker mismatch")
+fragment = fragment.replace(old_spec_body, new_spec_body, 1)
+registration_start = fragment.index(
+    "# Register as its own uniform type while reusing the standard"
+)
+boundary_start = fragment.index("class QwenMTPBoundaryHiddenCache:")
+fragment = fragment[:registration_start] + fragment[boundary_start:]
 Path("vllm_metal/v1/qwen_mtp_paged.py").write_text(fragment)
 
 path = "vllm_metal/attention/runtime/hybrid.py"
