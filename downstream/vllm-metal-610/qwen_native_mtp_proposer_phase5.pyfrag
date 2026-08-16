@@ -10,8 +10,13 @@ class QwenNativeMTPProposer:
     """One-token native Qwen MTP proposer backed by scheduler-owned KV.
 
     The target hybrid runtime owns both the MTP-head paged KV and a target
-    boundary-hidden shadow.  A new request may therefore adopt a scheduler
+    boundary-hidden shadow. A new request may therefore adopt a scheduler
     prefix hit without creating a fresh request-local MTP cache.
+
+    vLLM's EAGLE cache group drops one hash unit from a warm hit, so the target
+    recomputes a non-empty suffix. The retained MTP cache is valid through the
+    recompute boundary; drafting resumes *at* ``prefill.start_pos`` rather than
+    overwriting the retained shared tail at ``start_pos - 1``.
     """
 
     def __init__(self, runner: MetalModelRunner) -> None:
@@ -67,7 +72,10 @@ class QwenNativeMTPProposer:
                 next_mtp_position=0,
             )
         try:
-            boundary = self._runtime().qwen_mtp_boundary_hidden(
+            # Validate that the target prefix's durable boundary metadata exists
+            # in the same scheduler-owned block lineage. EAGLE has already
+            # dropped one hash unit, so the MTP KV itself resumes at start_pos.
+            self._runtime().qwen_mtp_boundary_hidden(
                 prefill.block_ids,
                 prefill.start_pos - 1,
             )
@@ -78,8 +86,8 @@ class QwenNativeMTPProposer:
             self._prefix_hit_blocked.add(prefill.req_id)
             return None
         return _QwenMTPRequestState(
-            pending_hidden=boundary,
-            next_mtp_position=prefill.start_pos - 1,
+            pending_hidden=None,
+            next_mtp_position=prefill.start_pos,
         )
 
     def _run_pairs(
@@ -218,9 +226,9 @@ class QwenNativeMTPProposer:
             if req_id in self._prefix_hit_blocked:
                 continue
 
-            expected_position = max(0, prefill.start_pos - 1)
-            if request_state.pending_hidden is None and prefill.start_pos == 0:
-                expected_position = 0
+            expected_position = prefill.start_pos - int(
+                request_state.pending_hidden is not None
+            )
             if request_state.next_mtp_position != expected_position:
                 raise RuntimeError(
                     f"Qwen MTP prefill {req_id!r} expected MTP position "
