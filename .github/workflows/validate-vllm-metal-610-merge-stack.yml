@@ -222,7 +222,14 @@ jobs:
           PYTORCH_MPS_HIGH_WATERMARK_RATIO: '0.0'
         run: |
           source .venv/bin/activate
-          pytest -m 'not slow' tests/ -q --tb=short
+          # MLX and PyTorch MPS share the same unified-memory pool. Running the
+          # bridge module after 1,800 tests leaves MLX cache pressure in the same
+          # Python process and can reject even a 256-byte MPS allocation. The two
+          # pytest invocations below are one complete test gate, but use separate
+          # processes so the bridge is tested from a clean allocator state.
+          pytest -m 'not slow' tests/test_tensor_bridge.py -q --tb=short
+          pytest -m 'not slow' tests/ -q --tb=short \
+            --ignore=tests/test_tensor_bridge.py
 
       - name: Export five independent merge patches
         shell: bash
