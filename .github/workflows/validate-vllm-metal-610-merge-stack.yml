@@ -218,15 +218,14 @@ jobs:
       - name: Full non-slow unit suite
         shell: bash
         working-directory: vllm-metal
-        env:
-          PYTORCH_MPS_HIGH_WATERMARK_RATIO: '0.0'
         run: |
           source .venv/bin/activate
-          # MLX and PyTorch MPS share the same unified-memory pool. Running the
-          # bridge module after 1,800 tests leaves MLX cache pressure in the same
-          # Python process and can reject even a 256-byte MPS allocation. The two
-          # pytest invocations below are one complete test gate, but use separate
-          # processes so the bridge is tested from a clean allocator state.
+          # PyTorch 2.13 on the hosted arm64 runner treats a zero MPS high-water
+          # ratio as a zero allocation ceiling. Use its default allocator limit.
+          unset PYTORCH_MPS_HIGH_WATERMARK_RATIO
+          # MLX and PyTorch MPS share unified memory. Run the bridge module in a
+          # dedicated process and the remaining tests in another process. Their
+          # union is the complete non-slow suite; no test is skipped or xfailed.
           pytest -m 'not slow' tests/test_tensor_bridge.py -q --tb=short
           pytest -m 'not slow' tests/ -q --tb=short \
             --ignore=tests/test_tensor_bridge.py
