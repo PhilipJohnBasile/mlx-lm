@@ -138,11 +138,17 @@ replace_once(
                 cache_config.enable_prefix_caching
                 and vllm_config.speculative_config is not None
             ):
-                text_config = model_config.hf_config.get_text_config()
+                hf_config = model_config.hf_config
+                get_text_config = getattr(hf_config, \"get_text_config\", None)
+                text_config = (
+                    get_text_config() if callable(get_text_config) else hf_config
+                )
+                speculative_config = vllm_config.speculative_config
                 native_qwen_mtp = (
-                    vllm_config.speculative_config.method == \"mtp\"
+                    getattr(speculative_config, \"method\", None) == \"mtp\"
                     and int(
-                        vllm_config.speculative_config.num_speculative_tokens or 0
+                        getattr(speculative_config, \"num_speculative_tokens\", 0)
+                        or 0
                     )
                     == 1
                     and int(getattr(text_config, \"mtp_num_hidden_layers\", 0)) > 0
