@@ -1,0 +1,83 @@
+name: Apply transactional native-MTP prefix cache
+
+on:
+  push:
+    branches:
+      - automation/mtp-prefix-transaction
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: automation/mtp-prefix-transaction
+          fetch-depth: 0
+
+      - name: Reconstruct repair script
+        shell: bash
+        run: |
+          cat automation/mtp_prefix_transaction/part*.b64 | base64 --decode > /tmp/apply_mtp_prefix_transaction.py
+          python -m py_compile /tmp/apply_mtp_prefix_transaction.py
+
+      - name: Check out merge-ready MTP branch
+        shell: bash
+        run: |
+          git fetch origin ready/mtp-990-upstream-main
+          git checkout -B ready/mtp-990-upstream-main origin/ready/mtp-990-upstream-main
+
+      - uses: ./.github/actions/setup-macos
+        with:
+          python-version: "3.13"
+
+      - name: Install validation dependencies
+        shell: bash -l {0}
+        run: |
+          pip install pre-commit unittest-xml-reporting
+          pip install -e ".[test]"
+
+      - name: Apply transactional cache patch
+        shell: bash -l {0}
+        run: |
+          python /tmp/apply_mtp_prefix_transaction.py
+          git diff --check
+
+      - name: Format and lint
+        shell: bash -l {0}
+        run: |
+          pre-commit run --all-files || pre-commit run --all-files
+          git diff --check
+
+      - name: Run focused native-MTP tests
+        shell: bash -l {0}
+        run: python -m unittest tests.test_mtp
+
+      - name: Download upstream test data
+        shell: bash -l {0}
+        run: |
+          curl -o test_data.zip -L https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
+          unzip -q test_data.zip
+
+      - name: Run full upstream-equivalent test suite
+        shell: bash -l {0}
+        run: |
+          METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 HF_HOME="." \
+            python -m xmlrunner discover -v tests -o test-results/
+          mlx.launch -n 2 tests/model_parallel_tests.py
+
+      - name: Commit and publish
+        shell: bash
+        run: |
+          git config user.name "Philip John Basile"
+          git config user.email "PBasile@Basilecom.com"
+          git add mlx_lm/generate.py mlx_lm/models/cache.py mlx_lm/server.py tests/test_mtp.py
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+            exit 0
+          fi
+          git commit -m "fix: make native MTP prefix caching transactional"
+          git push origin HEAD:ready/mtp-990-upstream-main
