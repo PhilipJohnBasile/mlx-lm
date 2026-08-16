@@ -15,6 +15,19 @@ def replace_once(path: str, old: str, new: str, label: str) -> None:
 fragment = Path(
     "../lab/downstream/vllm-metal-610/qwen_mtp_paged.pyfrag"
 ).read_text()
+registry_marker = "# Register as its own uniform type while reusing the standard"
+if fragment.count(registry_marker) != 1:
+    raise RuntimeError("Qwen MTP registry marker mismatch")
+fragment = fragment.replace(
+    registry_marker,
+    "# Populate vLLM's built-in registry before adding an out-of-tree spec.\n"
+    "# Registering the custom type into an empty registry would otherwise make\n"
+    "# _ensure_registered() treat the registry as complete and skip the normal\n"
+    "# FullAttention/Mamba registrations.\n"
+    "KVCacheSpecRegistry._ensure_registered()\n\n"
+    + registry_marker,
+    1,
+)
 Path("vllm_metal/v1/qwen_mtp_paged.py").write_text(fragment)
 
 path = "vllm_metal/attention/runtime/hybrid.py"
