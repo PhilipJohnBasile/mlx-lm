@@ -6,6 +6,7 @@ on:
       - lab/vllm-metal-610-spider-web
     paths:
       - downstream/vllm-metal-610/apply_phase1_state_chain.py
+      - downstream/vllm-metal-610/run_phase1_state_chain.py
       - downstream/vllm-metal-610/apply_phase2_state_production.py
       - .github/workflows/validate-vllm-metal-610-phase2.yml
 
@@ -53,7 +54,7 @@ jobs:
         working-directory: vllm-metal
         run: |
           source .venv/bin/activate
-          python ../lab/downstream/vllm-metal-610/apply_phase1_state_chain.py
+          python ../lab/downstream/vllm-metal-610/run_phase1_state_chain.py
           python ../lab/downstream/vllm-metal-610/apply_phase2_state_production.py
           git diff --check
 
