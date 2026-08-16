@@ -20,7 +20,9 @@ from vllm.v1.core.single_type_kv_cache_manager import FullAttentionManager
 from vllm.v1.kv_cache_interface import MLAAttentionSpec
 from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
 """
-new_imports = """from vllm.v1.kv_cache_interface import HiddenStateCacheSpec
+new_imports = """from vllm.v1.core.single_type_kv_cache_manager import FullAttentionManager
+from vllm.v1.kv_cache_interface import HiddenStateCacheSpec
+from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
 """
 if fragment.count(old_imports) != 1:
     raise RuntimeError("Qwen MTP cache-spec import marker mismatch")
@@ -63,7 +65,19 @@ registration_start = fragment.index(
     "# Register as its own uniform type while reusing the standard"
 )
 boundary_start = fragment.index("class QwenMTPBoundaryHiddenCache:")
-fragment = fragment[:registration_start] + fragment[boundary_start:]
+registration = """# Initialize the built-in registry first, then register this cache-only
+# subtype as its own uniform base. Cache policy inserts it first in the spec
+# map, so vLLM's early uniformity probe cannot absorb it into target attention.
+KVCacheSpecRegistry._ensure_registered()
+KVCacheSpecRegistry.register(
+    QwenMTPAttentionSpec,
+    FullAttentionManager,
+    uniform_type_base_spec=QwenMTPAttentionSpec,
+)
+
+
+"""
+fragment = fragment[:registration_start] + registration + fragment[boundary_start:]
 Path("vllm_metal/v1/qwen_mtp_paged.py").write_text(fragment)
 
 path = "vllm_metal/attention/runtime/hybrid.py"
