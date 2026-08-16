@@ -1,0 +1,29 @@
+name: Rebase MTP ready branch
+
+on:
+  push:
+    branches:
+      - automation/rebase-mtp-ready
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ready/mtp-990-upstream-main
+          fetch-depth: 0
+
+      - name: Rebase onto current upstream main
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/ml-explore/mlx-lm.git
+          git fetch upstream main
+          git rebase upstream/main
+          git push --force-with-lease origin HEAD:ready/mtp-990-upstream-main
