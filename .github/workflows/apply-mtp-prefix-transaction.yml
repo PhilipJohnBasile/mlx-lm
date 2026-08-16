@@ -49,17 +49,17 @@ jobs:
 
           path = Path("tests/test_mtp.py")
           text = path.read_text()
-          old = '''        next(
-              mtp_generate_step(
-                  prompt,
-                  self.model,
-                  max_tokens=1,
-                  prompt_cache=prompt_cache,
-              )
+
+          start = text.index("    def test_mtp_extends_fresh_prompt_cache")
+          end = text.index(
+              "    def test_mtp_rejects_unaligned_populated_prompt_cache", start
           )
-          self.assertEqual(len(prompt_cache), n_main + 1)
-          '''
-          new = '''        generator = mtp_generate_step(
+          block = text[start:end]
+          call_start = block.index("        next(\n")
+          assertion = "        self.assertEqual(len(prompt_cache), n_main + 1)"
+          assertion_start = block.index(assertion)
+          assertion_end = assertion_start + len(assertion)
+          replacement = '''        generator = mtp_generate_step(
               prompt,
               self.model,
               max_tokens=1,
@@ -67,16 +67,19 @@ jobs:
           )
           next(generator)
           generator.close()
-          self.assertEqual(len(prompt_cache), n_main + 2)
-          '''
-          if text.count(old) != 1:
-              raise RuntimeError("fresh prompt-cache legacy assertion did not match")
-          text = text.replace(old, new, 1)
-          old = 'with self.assertRaisesRegex(ValueError, "aligned MTP cache"):'
-          new = 'with self.assertRaisesRegex(ValueError, "MTP cache entries and boundary state"):'
-          if text.count(old) != 1:
+          self.assertEqual(len(prompt_cache), n_main + 2)'''
+          block = block[:call_start] + replacement + block[assertion_end:]
+          text = text[:start] + block + text[end:]
+
+          old_regex = 'with self.assertRaisesRegex(ValueError, "aligned MTP cache"):'
+          new_regex = (
+              'with self.assertRaisesRegex('
+              'ValueError, "MTP cache entries and boundary state"): '
+          )
+          if text.count(old_regex) != 1:
               raise RuntimeError("unaligned prompt-cache error assertion did not match")
-          path.write_text(text.replace(old, new, 1))
+          text = text.replace(old_regex, new_regex, 1)
+          path.write_text(text)
           PY
           git diff --check
 
