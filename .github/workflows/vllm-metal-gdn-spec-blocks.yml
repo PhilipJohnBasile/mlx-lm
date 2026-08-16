@@ -47,9 +47,45 @@ jobs:
             vllm_metal/platform.py \
             tests/attention/test_align_gdn_state_manager.py \
             tests/test_spec_decode_metadata.py
+
+      - name: Install development environment and format patch
+        shell: bash
+        working-directory: work/vllm-metal
+        run: |
+          set -euxo pipefail
+          source scripts/lib.sh
+          setup_dev_env
+          source .venv-vllm-metal/bin/activate
+          ruff check --fix \
+            vllm_metal/attention/context.py \
+            vllm_metal/attention/impls/linear.py \
+            vllm_metal/attention/runtime/base.py \
+            vllm_metal/attention/runtime/hybrid.py \
+            vllm_metal/attention/runtime/protocol.py \
+            vllm_metal/attention/state/align.py \
+            vllm_metal/v1/cache_policy.py \
+            vllm_metal/v1/model_runner.py \
+            vllm_metal/v1/spec_decode.py \
+            vllm_metal/platform.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_spec_decode_metadata.py
+          ruff format \
+            vllm_metal/attention/context.py \
+            vllm_metal/attention/impls/linear.py \
+            vllm_metal/attention/runtime/base.py \
+            vllm_metal/attention/runtime/hybrid.py \
+            vllm_metal/attention/runtime/protocol.py \
+            vllm_metal/attention/state/align.py \
+            vllm_metal/v1/cache_policy.py \
+            vllm_metal/v1/model_runner.py \
+            vllm_metal/v1/spec_decode.py \
+            vllm_metal/platform.py \
+            tests/attention/test_align_gdn_state_manager.py \
+            tests/test_spec_decode_metadata.py
+          git diff --check
           git diff --binary > ../vllm-metal-gdn-spec-blocks.patch
 
-      - name: Install development environment and lint
+      - name: Run upstream lint suite
         shell: bash
         working-directory: work/vllm-metal
         run: |
