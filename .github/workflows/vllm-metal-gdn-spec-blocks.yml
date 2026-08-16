@@ -41,8 +41,11 @@ jobs:
             work/vllm-metal/tools/apply_gdn_spec_blocks.py \
             work/vllm-metal/tools/apply_gdn_spec_safety.py
           cd work/vllm-metal
-          python3 tools/apply_gdn_spec_blocks.py
-          python3 tools/apply_gdn_spec_safety.py
+          set -o pipefail
+          {
+            python3 tools/apply_gdn_spec_blocks.py
+            python3 tools/apply_gdn_spec_safety.py
+          } 2>&1 | tee ../vllm-metal-gdn-spec-blocks-apply.log
           cp tools/apply_gdn_spec_blocks.py ../vllm-metal-gdn-spec-blocks-apply.py
           cp tools/apply_gdn_spec_safety.py ../vllm-metal-gdn-spec-safety.py
           rm tools/apply_gdn_spec_blocks.py tools/apply_gdn_spec_safety.py
@@ -126,6 +129,7 @@ jobs:
           name: vllm-metal-gdn-spec-blocks
           path: |
             work/vllm-metal-gdn-spec-blocks.patch
+            work/vllm-metal-gdn-spec-blocks-apply.log
             work/vllm-metal-gdn-spec-blocks-lint.log
             work/vllm-metal-gdn-spec-blocks-tests.log
             work/vllm-metal-gdn-spec-blocks-apply.py
