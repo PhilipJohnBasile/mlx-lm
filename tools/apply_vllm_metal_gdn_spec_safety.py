@@ -105,9 +105,14 @@ replace_once(
 )
 replace_once(
     "vllm_metal/v1/spec_decode.py",
-    """        decode_req_ids = {req_id for req_id, _ in decode_reqs}
+    """                "KV slots."
+            )
+
+        decode_req_ids = {req_id for req_id, _ in decode_reqs}
 """,
-    """        if (
+    """                "KV slots."
+            )
+        if (
             (active_spec_tokens or has_invalid_spec_tokens)
             and is_hybrid
             and not hybrid_gdn_transactions_enabled
