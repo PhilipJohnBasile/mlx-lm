@@ -50,7 +50,7 @@ jobs:
           source .venv/bin/activate
           python -m pip install \
             'https://github.com/vllm-project/vllm/releases/download/v0.27.1/vllm-0.27.1%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl'
-          python -m pip install -e '.[dev]'
+          VLLM_METAL_BUILD_FROM_SOURCE=1 python -m pip install -e '.[dev]'
           git config user.name 'Philip John Basile'
           git config user.email 'PBasile@Basilecom.com'
 
@@ -137,20 +137,25 @@ jobs:
           source .venv/bin/activate
           python ../lab/downstream/vllm-metal-610/apply_phase5_runtime.py
           python ../lab/downstream/vllm-metal-610/apply_phase5_cache_policy.py
+          python ../lab/downstream/vllm-metal-610/apply_phase5_cache_policy_fix.py
           python ../lab/downstream/vllm-metal-610/apply_phase5_proposer.py
           python ../lab/downstream/vllm-metal-610/apply_phase5_runner.py
           cp ../lab/downstream/vllm-metal-610/test_qwen_native_mtp_proposer_phase5.py \
              tests/test_qwen_native_mtp_proposer.py
           cp ../lab/downstream/vllm-metal-610/test_qwen_mtp_paged_cache.py \
              tests/test_qwen_mtp_paged_cache.py
+          cp ../lab/downstream/vllm-metal-610/test_qwen_mtp_worker_budget.py \
+             tests/test_qwen_mtp_worker_budget.py
           ruff format \
             vllm_metal/v1/qwen_mtp_paged.py \
             tests/test_qwen_native_mtp_proposer.py \
-            tests/test_qwen_mtp_paged_cache.py
+            tests/test_qwen_mtp_paged_cache.py \
+            tests/test_qwen_mtp_worker_budget.py
           ruff check \
             vllm_metal/v1/qwen_mtp_paged.py \
             tests/test_qwen_native_mtp_proposer.py \
-            tests/test_qwen_mtp_paged_cache.py
+            tests/test_qwen_mtp_paged_cache.py \
+            tests/test_qwen_mtp_worker_budget.py
           files="$(git diff --name-only --diff-filter=ACMRT -- '*.py')"
           if [ -n "$files" ]; then ruff format $files; ruff check $files; fi
           git diff --check
@@ -158,12 +163,14 @@ jobs:
           pytest -q \
             tests/test_qwen_native_mtp_proposer.py \
             tests/test_qwen_mtp_paged_cache.py \
+            tests/test_qwen_mtp_worker_budget.py \
             tests/test_spec_decode_metadata.py \
             tests/test_paged_prefix_caching.py \
             tests/test_kv_cache_spec_capacity.py \
             tests/attention/test_align_gdn_state_manager.py \
             tests/test_gdn_lazy_wrapper.py \
             tests/test_v1_model_runner_generate.py \
+            tests/test_v1_worker.py \
             tests/test_turboquant_hybrid_sizing.py \
             tests/test_platform.py \
             > ../lab/downstream/vllm-metal-610/phase5-tests.log 2>&1
@@ -198,6 +205,8 @@ jobs:
       - name: Full non-slow unit suite
         shell: bash
         working-directory: vllm-metal
+        env:
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO: '0.0'
         run: |
           source .venv/bin/activate
           pytest -m 'not slow' tests/ -q --tb=short
