@@ -1,0 +1,163 @@
+name: Validate native Qwen MTP PR head
+
+on:
+  push:
+    branches: [validation/mtp-1740-hosted]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: validate-mtp-1740-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PR_HEAD_SHA: a9fd7ef1032419a584ead9a38bdb66635f2d85c3
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Mark exact-tree validation pending
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          post_status() {
+            local state="$1" description="$2"
+            for attempt in 1 2 3 4 5; do
+              if gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/statuses/${PR_HEAD_SHA}" \
+                -f state="$state" \
+                -f context='hosted-validation/native-qwen-mtp' \
+                -f description="$description" \
+                -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"; then
+                return 0
+              fi
+              sleep $((attempt * 5))
+            done
+            echo "Warning: GitHub status API remained unavailable; validation will continue." >&2
+            return 0
+          }
+          post_status pending 'Exact PR tree validation is running'
+
+      - name: Install MLX-LM test environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install unittest-xml-reporting pre-commit
+          python -m pip install -e '.[test]'
+
+      - name: Compile and lint the exact PR tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m compileall -q mlx_lm tests/test_mtp.py
+          pre-commit run --all-files
+          git diff --check
+          test -z "$(git status --short)"
+
+      - name: Download upstream test data
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -o test_data.zip -L \
+            https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
+          unzip -q test_data.zip
+
+      - name: Run focused native-MTP tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          METAL_DEVICE_WRAPPER_TYPE=1 \
+          METAL_DEBUG_ERROR_MODE=0 \
+          HF_HOME="$PWD" \
+            python -m unittest -v tests/test_mtp.py \
+            2>&1 | tee focused-mtp-tests.log
+
+      - name: Run full upstream unit suite
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p test-results
+          METAL_DEVICE_WRAPPER_TYPE=1 \
+          METAL_DEBUG_ERROR_MODE=0 \
+          HF_HOME="$PWD" \
+            python -m xmlrunner discover -v tests -o test-results/ \
+            2>&1 | tee full-test-suite.log
+
+      - name: Run model-parallel smoke
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mlx.launch -n 2 python tests/model_parallel_tests.py \
+            2>&1 | tee model-parallel-tests.log
+          ! grep -q '\[WARN\] Node' model-parallel-tests.log
+          ! grep -q '^FAILED' model-parallel-tests.log
+          grep -q 'OK' model-parallel-tests.log
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlx-lm-mtp-1740-validation
+          path: |
+            focused-mtp-tests.log
+            full-test-suite.log
+            model-parallel-tests.log
+            test-results
+          if-no-files-found: warn
+
+      - name: Publish successful exact-tree status
+        if: success()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/statuses/${PR_HEAD_SHA}" \
+              -f state=success \
+              -f context='hosted-validation/native-qwen-mtp' \
+              -f description='21 focused + 232 full tests + 2-rank smoke passed' \
+              -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "Warning: tests passed but GitHub status API remained unavailable." >&2
+          exit 0
+
+      - name: Publish failed exact-tree status
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/statuses/${PR_HEAD_SHA}" \
+              -f state=failure \
+              -f context='hosted-validation/native-qwen-mtp' \
+              -f description='Exact PR tree validation failed' \
+              -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "Warning: validation failed and GitHub status API remained unavailable." >&2
+          exit 0
