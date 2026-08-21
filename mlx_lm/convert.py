@@ -39,11 +39,17 @@ def mixed_quant_predicate_builder(
     if len(down_keys) == 0:
         raise ValueError("Model does not have expected keys for mixed quant.")
 
-    # Look for the layer index location in the path:
-    for layer_location, k in enumerate(down_keys[0].split(".")):
-        if k.isdigit():
-            break
     num_layers = len(model.layers)
+
+    def layer_index(path: str) -> int:
+        """Extract a body or MTP layer index without assuming a shared layout."""
+        parts = path.split(".")
+        for prefix in ("layers", "mtp"):
+            if prefix in parts:
+                location = parts.index(prefix) + 1
+                if location < len(parts) and parts[location].isdigit():
+                    return int(parts[location])
+        return 0
 
     def mixed_quant_predicate(
         path: str,
@@ -53,11 +59,7 @@ def mixed_quant_predicate_builder(
         Ref: https://github.com/ggerganov/llama.cpp/blob/917786f43d0f29b7c77a0c56767c0fa4df68b1c5/src/llama.cpp#L5265
         By Alex Barron: https://gist.github.com/barronalex/84addb8078be21969f1690c1454855f3
         """
-        index = (
-            int(path.split(".")[layer_location])
-            if len(path.split(".")) > layer_location
-            else 0
-        )
+        index = layer_index(path)
         use_more_bits = (
             index < num_layers // 8
             or index >= 7 * num_layers // 8
@@ -127,6 +129,7 @@ def convert(
         return_config=True,
         tokenizer_config={"trust_remote_code": trust_remote_code},
         lazy=True,
+        trust_remote_code=trust_remote_code,
     )
 
     if isinstance(quant_predicate, str):
