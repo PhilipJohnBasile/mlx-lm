@@ -36,11 +36,13 @@ from .generate import (
     BatchGenerator,
     StopSequenceMatcher,
     TextStateMachine,
+    _native_mtp_active,
+    _sampler_for_generation,
     make_stop_matcher,
     make_text_state_machine,
     stream_generate,
 )
-from .models.cache import LRUPromptCache, make_prompt_cache
+from .models.cache import LRUPromptCache, MTPPromptCacheState, make_prompt_cache
 from .sample_utils import make_logits_processors, make_sampler
 from .utils import _parse_size, load, sharded_load
 
@@ -225,8 +227,8 @@ class GenerationContext:
 @dataclass
 class Response:
     text: str
-    token: int
-    logprob: float
+    token: Optional[int]
+    logprob: Optional[float]
     finish_reason: Optional[str]
     top_tokens: Tuple[Dict[str, Any]]
 
@@ -378,6 +380,10 @@ class ModelProvider:
         return self.model, self.tokenizer
 
 
+def _xtc_special_tokens(tokenizer):
+    return tokenizer.encode("\n") + list(tokenizer.eos_token_ids)
+
+
 def _make_sampler(args, tokenizer):
     return make_sampler(
         args.sampling.temperature,
@@ -386,7 +392,7 @@ def _make_sampler(args, tokenizer):
         min_p=args.sampling.min_p,
         xtc_probability=args.sampling.xtc_probability,
         xtc_threshold=args.sampling.xtc_threshold,
-        xtc_special_tokens=tokenizer.encode("\n") + list(tokenizer.eos_token_ids),
+        xtc_special_tokens=_xtc_special_tokens(tokenizer),
     )
 
 
@@ -746,7 +752,14 @@ class ResponseGenerator:
                         rqueue.put(e)
                         continue
 
-                    if not self._is_batchable(args):
+                    # Native MTP is currently single-sequence only. Keep routing
+                    # deterministic instead of racing a best-effort queue check.
+                    mtp_active = _native_mtp_active(
+                        model,
+                        mtp=getattr(self.cli_args, "mtp", False),
+                        draft_model=self.model_provider.draft_model,
+                    )
+                    if not self._is_batchable(args) or mtp_active:
                         self._serve_single((rqueue, request, args))
                         continue
 
@@ -867,6 +880,17 @@ class ResponseGenerator:
 
     def _serve_single(self, request):
         rqueue, request, args = request
+        generation = None
+        generation_closed = False
+
+        def close_generation():
+            nonlocal generation_closed
+            if generation_closed or generation is None:
+                return
+            close = getattr(generation, "close", None)
+            if close is not None:
+                close()
+            generation_closed = True
 
         # Define the progress callback
         def progress(tokens_processed, tokens_total):
@@ -910,6 +934,27 @@ class ResponseGenerator:
             cache, rest = self.prompt_cache.fetch_nearest_cache(
                 self.model_provider.model_key, prompt
             )
+            mtp_requested = getattr(self.cli_args, "mtp", False)
+            mtp_active = _native_mtp_active(
+                model,
+                mtp=mtp_requested,
+                draft_model=draft_model,
+            )
+            # A reusable native-MTP entry contains target caches, the MTP-head
+            # caches, and one boundary record holding the final target hidden state.
+            # Exact hits have no suffix token with which to resume the lagged MTP
+            # state, so they are rebuilt rather than replayed unsafely.
+            if mtp_active and cache is not None:
+                expected = len(model.layers) + len(model.make_mtp_cache()) + 1
+                valid_mtp_cache = (
+                    len(cache) == expected
+                    and isinstance(cache[-1], MTPPromptCacheState)
+                    and not cache[-1].empty()
+                    and len(rest) > 0
+                )
+                if not valid_mtp_cache:
+                    cache = None
+                    rest = prompt
             ctx.prompt_cache_count = len(prompt) - len(rest)
             cache_key = prompt[:]
             if cache is None:
@@ -919,58 +964,86 @@ class ResponseGenerator:
 
             # Process the prompt and generate tokens
             stop_state = stop_matcher.make_state()
-            for gen in stream_generate(
+            generation = stream_generate(
                 model=model,
                 tokenizer=tokenizer,
                 prompt=rest,
                 max_tokens=args.max_tokens,
-                sampler=sampler,
+                sampler=_sampler_for_generation(
+                    model, draft_model, mtp_requested, sampler
+                ),
                 logits_processors=logits_processors,
                 prompt_cache=cache,
                 draft_model=draft_model,
                 num_draft_tokens=args.num_draft_tokens,
                 prompt_progress_callback=progress,
                 prefill_step_size=self.cli_args.prefill_step_size,
-            ):
+                mtp=mtp_requested,
+                temp=args.sampling.temperature,
+                top_p=args.sampling.top_p,
+                top_k=args.sampling.top_k,
+                min_p=args.sampling.min_p,
+                xtc_probability=args.sampling.xtc_probability,
+                xtc_threshold=args.sampling.xtc_threshold,
+                xtc_special_tokens=_xtc_special_tokens(tokenizer),
+            )
+            for gen in generation:
                 finish_reason = gen.finish_reason
 
                 # Token-level stop word detection
-                stop_state, matched = StopSequenceMatcher.match(
-                    stop_state, stop_matcher._trie, gen.token
-                )
+                matched = False
+                if gen.token is not None:
+                    stop_state, matched = StopSequenceMatcher.match(
+                        stop_state, stop_matcher._trie, gen.token
+                    )
                 if matched:
                     finish_reason = "stop"
 
-                rqueue.put(
-                    Response(
-                        gen.text,
-                        gen.token,
-                        gen.logprobs[gen.token].item(),
-                        finish_reason,
+                response = Response(
+                    gen.text,
+                    gen.token,
+                    (
+                        gen.logprobs[gen.token].item()
+                        if gen.logprobs is not None and gen.token is not None
+                        else None
+                    ),
+                    finish_reason,
+                    (
                         _format_top_logprobs(
                             gen.logprobs, args.top_logprobs, tokenizer
-                        ),
-                    )
+                        )
+                        if gen.logprobs is not None
+                        else ()
+                    ),
                 )
-                cache_key.append(gen.token)
+
+                # A terminal response is a publication boundary. Close first so
+                # native-MTP cache state is committed before consumers observe it.
+                if finish_reason is not None:
+                    close_generation()
+                rqueue.put(response)
+                if gen.token is not None:
+                    cache_key.append(gen.token)
 
                 if ctx._should_stop:
                     if self._is_distributed:
                         raise NotImplementedError()
+                    close_generation()
                     break
 
                 if finish_reason is not None:
                     break
 
-            rqueue.put(None)
-
             # Save the KV cache again
             self.prompt_cache.insert_cache(
                 self.model_provider.model_key, cache_key, cache
             )
+            rqueue.put(None)
 
         except Exception as e:
             rqueue.put(e)
+        finally:
+            close_generation()
 
     def generate(
         self,
@@ -1434,12 +1507,13 @@ class APIHandler(BaseHTTPRequestHandler):
                         made_tool_call = True
                     text += clean_text
 
-                # Add the tokens and logprobs to the vars.
-                tokens.append(gen.token)
-                if args.logprobs:
-                    token_logprobs.append(gen.logprob)
-                if args.top_logprobs > 0:
-                    top_tokens.append(gen.top_tokens)
+                # A zero-token terminal response carries lifecycle metadata only.
+                if gen.token is not None:
+                    tokens.append(gen.token)
+                    if args.logprobs:
+                        token_logprobs.append(gen.logprob)
+                    if args.top_logprobs > 0:
+                        top_tokens.append(gen.top_tokens)
 
                 if (
                     self.stream
@@ -1849,6 +1923,12 @@ def main():
         "--pipeline",
         action="store_true",
         help="Use pipelining instead of tensor parallelism",
+    )
+    parser.add_argument(
+        "--mtp",
+        action="store_true",
+        help="Use native Multi-Token Prediction for speculative decoding "
+        "(requires a model with an MTP head, e.g. Qwen3.5).",
     )
     args = parser.parse_args()
     if mx.metal.is_available():
