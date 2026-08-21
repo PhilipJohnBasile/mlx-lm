@@ -140,6 +140,8 @@ def make_logits_processors(
         def logit_bias_processor(_, logits):
             return logits.at[:, indices].add(values)
 
+        # Native MTP requires processors to opt into its repeated calls.
+        logit_bias_processor.is_stateless = True
         logits_processors.append(logit_bias_processor)
 
     repetition_penalties = [
@@ -345,6 +347,7 @@ def make_repetition_penalty(penalty: float, context_size: int = 20):
             logits[:, tokens] = selected_logits
         return logits
 
+    repetition_penalty_processor.is_stateless = True
     return repetition_penalty_processor
 
 
@@ -371,6 +374,7 @@ def make_presence_penalty(penalty: float, context_size: int = 20):
             logits[:, tokens] -= penalty
         return logits
 
+    presence_penalty_processor.is_stateless = True
     return presence_penalty_processor
 
 
@@ -400,4 +404,5 @@ def make_frequency_penalty(penalty: float, context_size: int = 20):
             logits = logits.at[:, tokens].subtract(penalty)
         return logits
 
+    frequency_penalty_processor.is_stateless = True
     return frequency_penalty_processor

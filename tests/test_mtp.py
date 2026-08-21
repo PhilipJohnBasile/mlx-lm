@@ -2,16 +2,23 @@ import importlib
 import itertools
 import tempfile
 import unittest
+from functools import partial
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import mlx.core as mx
 
-from mlx_lm.generate import generate_step, mtp_generate_step
+from mlx_lm.generate import generate, generate_step, mtp_generate_step, stream_generate
 from mlx_lm.models.cache import (
     MTPPromptCacheState,
     load_prompt_cache,
     make_prompt_cache,
     save_prompt_cache,
 )
+from mlx_lm.sample_utils import make_logits_processors
+from mlx_lm.tokenizer_utils import TokenizerWrapper
+
+generate_module = importlib.import_module("mlx_lm.generate")
 
 
 def _make_qwen3_5_mtp_model():
@@ -76,6 +83,69 @@ def _make_qwen3_5_moe_mtp_model():
     return module.Model(args)
 
 
+class _TestTokenizer:
+    """Small tokenizer surface needed to exercise stream_generate dispatch."""
+
+    eos_token_id = -1
+    vocab_size = 256
+    chat_template = None
+    bos_token = None
+
+    def get_vocab(self):
+        return {}
+
+    def encode(self, _text, add_special_tokens=False):
+        return [1, 2, 3]
+
+    def decode(self, tokens):
+        return "".join(str(token) for token in tokens)
+
+
+class _NoopMTPTestCache:
+    @property
+    def state(self):
+        return mx.array(0)
+
+    def is_trimmable(self):
+        return False
+
+
+class _ForcedRejectionMTPModel:
+    """Minimal native-MTP model with a deterministic draft rejection.
+
+    The target distribution is p=[0,.45,.35,.20] and the draft distribution
+    is q=[.35,.45,0,.20].  A controlled sampler chooses target token 1 and
+    draft token 0.  Token 0 is rejected and p-q has support only at token 2.
+    """
+
+    supports_mtp = True
+    layers = [None]
+
+    def __init__(self):
+        self.verify_calls = 0
+
+    def make_cache(self):
+        return [_NoopMTPTestCache()]
+
+    def make_mtp_cache(self):
+        return [_NoopMTPTestCache()]
+
+    def __call__(self, tokens, cache, return_hidden=False, n_confirmed=0):
+        del cache, n_confirmed
+        steps = tokens.shape[1]
+        if steps == 2:
+            self.verify_calls += 1
+        logits = mx.log(mx.array([0.0, 0.45, 0.35, 0.20]))
+        logits = mx.broadcast_to(logits, (1, steps, 4))
+        hidden = mx.zeros((1, steps, 1))
+        return (logits, hidden) if return_hidden else logits
+
+    def mtp_forward(self, hidden, next_ids, cache):
+        del hidden, cache
+        logits = mx.log(mx.array([0.35, 0.45, 0.0, 0.20]))
+        return mx.broadcast_to(logits, (1, next_ids.shape[1], 4))
+
+
 class TestMTP(unittest.TestCase):
     """Tests for native MTP (Multi-Token Prediction) speculative decoding.
 
@@ -83,14 +153,14 @@ class TestMTP(unittest.TestCase):
     with mtp_num_hidden_layers=1 and full_attention_interval=2, giving a
     mix of GatedDeltaNet (SSM) and full-attention layers.
 
-    Not tested here (would require a real tokenizer loaded from HF):
-    - stream_generate() with mtp=True/False flag dispatch
+    Not tested here:
     - Server integration (--mtp flag, is_batchable)
     """
 
     @classmethod
     def setUpClass(cls):
         cls.model = _make_qwen3_5_mtp_model()
+        cls.tokenizer = TokenizerWrapper(_TestTokenizer())
 
     def test_mtp_module_exists(self):
         """Model with mtp_num_hidden_layers=1 should have MTP head."""
@@ -250,6 +320,82 @@ class TestMTP(unittest.TestCase):
                 )
             )
 
+    def test_mtp_rejects_populated_cache_with_empty_boundary(self):
+        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+        prompt_cache = make_prompt_cache(self.model)
+        list(
+            mtp_generate_step(
+                prompt,
+                self.model,
+                max_tokens=1,
+                prompt_cache=prompt_cache,
+            )
+        )
+        boundary = prompt_cache[-1]
+        self.assertIsInstance(boundary, MTPPromptCacheState)
+        boundary.last_hidden = None
+        boundary.num_tokens = 0
+
+        with self.assertRaisesRegex(ValueError, "non-empty boundary metadata"):
+            next(
+                mtp_generate_step(
+                    mx.array([4], dtype=mx.uint32),
+                    self.model,
+                    prompt_cache=prompt_cache,
+                )
+            )
+
+    def test_mtp_accepts_all_empty_cache_with_empty_boundary(self):
+        prompt_cache = make_prompt_cache(self.model)
+        prompt_cache.extend(self.model.make_mtp_cache())
+        prompt_cache.append(MTPPromptCacheState())
+
+        result = list(
+            mtp_generate_step(
+                mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                self.model,
+                max_tokens=1,
+                prompt_cache=prompt_cache,
+            )
+        )
+        self.assertEqual(len(result), 1)
+
+    def test_mtp_invalidates_cache_after_processor_failure(self):
+        prompt_cache = make_prompt_cache(self.model)
+        list(
+            mtp_generate_step(
+                mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                self.model,
+                max_tokens=1,
+                prompt_cache=prompt_cache,
+            )
+        )
+
+        def failing_processor(_tokens, _logits):
+            raise RuntimeError("injected processor failure")
+
+        failing_processor.is_stateless = True
+        with self.assertRaisesRegex(RuntimeError, "injected processor failure"):
+            next(
+                mtp_generate_step(
+                    mx.array([4], dtype=mx.uint32),
+                    self.model,
+                    prompt_cache=prompt_cache,
+                    logits_processors=[failing_processor],
+                )
+            )
+
+        boundary = prompt_cache[-1]
+        self.assertTrue(boundary.empty())
+        with self.assertRaisesRegex(ValueError, "non-empty boundary metadata"):
+            next(
+                mtp_generate_step(
+                    mx.array([4], dtype=mx.uint32),
+                    self.model,
+                    prompt_cache=prompt_cache,
+                )
+            )
+
     def test_mtp_rejects_stateful_logits_processor(self):
         class StatefulProcessor:
             def __call__(self, tokens, logits):
@@ -263,6 +409,42 @@ class TestMTP(unittest.TestCase):
                     logits_processors=[StatefulProcessor()],
                 )
             )
+
+    def test_mtp_rejects_unmarked_closure_and_partial(self):
+        calls = []
+
+        def stateful_processor(_tokens, logits):
+            calls.append(1)
+            return logits
+
+        for processor in (stateful_processor, partial(stateful_processor)):
+            with self.assertRaisesRegex(ValueError, "stateless logits processors"):
+                next(
+                    mtp_generate_step(
+                        mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                        self.model,
+                        logits_processors=[processor],
+                    )
+                )
+        self.assertEqual(calls, [])
+
+    def test_mtp_accepts_library_logits_processors(self):
+        processors = make_logits_processors(
+            logit_bias={0: 1.0},
+            repetition_penalty=1.1,
+            presence_penalty=0.1,
+            frequency_penalty=0.1,
+        )
+        self.assertTrue(all(processor.is_stateless for processor in processors))
+        result = list(
+            mtp_generate_step(
+                mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                self.model,
+                max_tokens=1,
+                logits_processors=processors,
+            )
+        )
+        self.assertEqual(len(result), 1)
 
     def test_mtp_generate_identity_with_logits_processor(self):
         """mtp_generate_step must produce the same greedy tokens as generate_step
@@ -283,6 +465,8 @@ class TestMTP(unittest.TestCase):
             # 1D boost broadcasts correctly for both (vocab,) and (1, vocab) logits.
             boost = mx.zeros(logits.shape[-1])
             return logits + boost.at[target].add(10.0)
+
+        context_processor.is_stateless = True
 
         std_cache = make_prompt_cache(self.model)
         std_tokens = []
@@ -335,6 +519,8 @@ class TestMTP(unittest.TestCase):
                     boost = mx.zeros(logits.shape[-1])
                     return logits + boost.at[4].add(1000.0)
             return logits
+
+        forcing_processor.is_stateless = True
 
         for _tok, _, _ in mtp_generate_step(
             prompt,
@@ -394,6 +580,298 @@ class TestMTP(unittest.TestCase):
         next(generator)
         generator.close()
         self._assert_transactional_prompt_cache(prompt_cache, len(prompt) + 1)
+
+    def test_mtp_prompt_cache_invalidates_on_generator_throw(self):
+        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+        prompt_cache = make_prompt_cache(self.model)
+        generator = mtp_generate_step(
+            prompt,
+            self.model,
+            max_tokens=10,
+            prompt_cache=prompt_cache,
+        )
+
+        next(generator)
+        with self.assertRaisesRegex(RuntimeError, "injected consumer failure"):
+            generator.throw(RuntimeError("injected consumer failure"))
+
+        boundary = prompt_cache[-1]
+        self.assertTrue(boundary.empty())
+        with self.assertRaisesRegex(ValueError, "non-empty boundary metadata"):
+            next(
+                mtp_generate_step(
+                    mx.array([4], dtype=mx.uint32),
+                    self.model,
+                    prompt_cache=prompt_cache,
+                )
+            )
+
+    def test_stream_mtp_finalizes_before_terminal_response(self):
+        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+        prompt_cache = make_prompt_cache(self.model)
+        generator = stream_generate(
+            self.model,
+            self.tokenizer,
+            prompt,
+            max_tokens=1,
+            mtp=True,
+            prompt_cache=prompt_cache,
+        )
+
+        response = next(generator)
+        self.assertEqual(response.finish_reason, "length")
+        self._assert_transactional_prompt_cache(prompt_cache, len(prompt) + 1)
+        generator.close()
+
+    def test_stream_mtp_rejects_custom_sampler(self):
+        def forcing_sampler(logprobs):
+            return mx.zeros(logprobs.shape[:-1], dtype=mx.uint32)
+
+        with self.assertRaisesRegex(ValueError, "does not support custom samplers"):
+            next(
+                stream_generate(
+                    self.model,
+                    self.tokenizer,
+                    mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                    max_tokens=1,
+                    mtp=True,
+                    sampler=forcing_sampler,
+                )
+            )
+
+    def test_stream_external_draft_with_mtp_honors_custom_sampler(self):
+        def forcing_sampler(logprobs):
+            return mx.full(logprobs.shape[:-1], 7, dtype=mx.uint32)
+
+        captured = {}
+
+        def fake_speculative_step(_prompt, _model, _draft_model, **kwargs):
+            captured.update(kwargs)
+            logprobs = mx.zeros(256)
+            token = kwargs["sampler"](logprobs[None]).item()
+            yield token, logprobs, True
+
+        with patch.object(
+            generate_module,
+            "speculative_generate_step",
+            side_effect=fake_speculative_step,
+        ):
+            response = next(
+                stream_generate(
+                    self.model,
+                    self.tokenizer,
+                    mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                    max_tokens=1,
+                    draft_model=self.model,
+                    mtp=True,
+                    sampler=forcing_sampler,
+                )
+            )
+
+        self.assertIs(captured["sampler"], forcing_sampler)
+        self.assertEqual(response.finish_reason, "length")
+        self.assertEqual(response.token, 7)
+
+    def test_cli_mtp_sampler_routing(self):
+        args = SimpleNamespace(
+            seed=None,
+            prompt_cache_file=None,
+            trust_remote_code=False,
+            model="target",
+            adapter_path=None,
+            quantize_activations=False,
+            extra_eos_token=(),
+            chat_template_config=None,
+            prompt="hello",
+            ignore_chat_template=True,
+            system_prompt=None,
+            prefill_response=None,
+            draft_model="draft",
+            temp=0.7,
+            top_p=0.9,
+            min_p=0.0,
+            min_tokens_to_keep=1,
+            top_k=0,
+            xtc_probability=0.0,
+            xtc_threshold=0.0,
+            max_tokens=1,
+            verbose=True,
+            max_kv_size=None,
+            kv_bits=None,
+            kv_group_size=64,
+            quantized_kv_start=0,
+            num_draft_tokens=3,
+            mtp=True,
+        )
+        parser = SimpleNamespace(parse_args=lambda: args)
+        draft_model = object()
+        sampler = object()
+
+        with (
+            patch.object(generate_module, "setup_arg_parser", return_value=parser),
+            patch.object(
+                generate_module,
+                "load",
+                side_effect=[
+                    (self.model, self.tokenizer),
+                    (draft_model, self.tokenizer),
+                ],
+            ),
+            patch.object(generate_module, "make_sampler", return_value=sampler),
+            patch.object(generate_module, "generate", return_value="") as generate,
+        ):
+            generate_module.main()
+
+        kwargs = generate.call_args.kwargs
+        self.assertIs(kwargs["sampler"], sampler)
+        self.assertIs(kwargs["draft_model"], draft_model)
+        self.assertTrue(kwargs["mtp"])
+
+        args.draft_model = None
+        with (
+            patch.object(generate_module, "setup_arg_parser", return_value=parser),
+            patch.object(
+                generate_module, "load", return_value=(self.model, self.tokenizer)
+            ),
+            patch.object(generate_module, "make_sampler", return_value=sampler),
+            patch.object(generate_module, "generate", return_value="") as generate,
+        ):
+            generate_module.main()
+
+        kwargs = generate.call_args.kwargs
+        self.assertIsNone(kwargs["sampler"])
+        self.assertIsNone(kwargs["draft_model"])
+        self.assertTrue(kwargs["mtp"])
+
+    def test_mtp_prefill_reports_progress(self):
+        callbacks = []
+        prompt = mx.array([0, 1, 2, 3, 4, 5], dtype=mx.uint32)
+
+        list(
+            mtp_generate_step(
+                prompt,
+                self.model,
+                max_tokens=1,
+                prefill_step_size=2,
+                prompt_progress_callback=lambda processed, total: callbacks.append(
+                    (processed, total)
+                ),
+            )
+        )
+
+        self.assertEqual(callbacks, [(0, 6), (2, 6), (4, 6), (5, 6), (6, 6)])
+
+    def test_mtp_max_tokens_zero_matches_prefill_cache_and_progress(self):
+        prompt = mx.array([0, 1, 2, 3, 4, 5], dtype=mx.uint32)
+        standard_cache = make_prompt_cache(self.model)
+        mtp_cache = make_prompt_cache(self.model)
+        standard_progress = []
+        mtp_progress = []
+
+        standard_output = list(
+            generate_step(
+                prompt,
+                self.model,
+                max_tokens=0,
+                prompt_cache=standard_cache,
+                prefill_step_size=2,
+                prompt_progress_callback=lambda processed, total: standard_progress.append(
+                    (processed, total)
+                ),
+            )
+        )
+        mtp_output = list(
+            mtp_generate_step(
+                prompt,
+                self.model,
+                max_tokens=0,
+                prompt_cache=mtp_cache,
+                prefill_step_size=2,
+                prompt_progress_callback=lambda processed, total: mtp_progress.append(
+                    (processed, total)
+                ),
+            )
+        )
+
+        self.assertEqual(standard_output, [])
+        self.assertEqual(mtp_output, [])
+        self.assertEqual(mtp_progress, standard_progress)
+        self.assertEqual(mtp_progress[-1], (len(prompt), len(prompt)))
+        self._assert_transactional_prompt_cache(mtp_cache, len(prompt))
+
+        standard_attention = next(c for c in standard_cache if c.is_trimmable())
+        mtp_attention = next(
+            c for c in mtp_cache[: len(self.model.layers)] if c.is_trimmable()
+        )
+        self.assertEqual(mtp_attention.offset, standard_attention.offset)
+        self.assertTrue(
+            mx.allclose(mtp_attention.state[0], standard_attention.state[0]).item()
+        )
+        self.assertTrue(
+            mx.allclose(mtp_attention.state[1], standard_attention.state[1]).item()
+        )
+
+        suffix = mx.array([6, 7], dtype=mx.uint32)
+        resumed_tokens = [
+            int(token)
+            for token, _, _ in mtp_generate_step(
+                suffix,
+                self.model,
+                max_tokens=4,
+                prompt_cache=mtp_cache,
+            )
+        ]
+        uncached_tokens = [
+            int(token)
+            for token, _, _ in mtp_generate_step(
+                mx.concatenate([prompt, suffix]),
+                self.model,
+                max_tokens=4,
+            )
+        ]
+
+        self.assertEqual(resumed_tokens, uncached_tokens)
+        self._assert_transactional_prompt_cache(
+            mtp_cache, len(prompt) + len(suffix) + len(resumed_tokens)
+        )
+
+    def test_public_generation_max_tokens_zero_has_explicit_terminal_response(self):
+        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
+        prompt_cache = make_prompt_cache(self.model)
+
+        responses = list(
+            stream_generate(
+                self.model,
+                self.tokenizer,
+                prompt,
+                max_tokens=0,
+                mtp=True,
+                prompt_cache=prompt_cache,
+            )
+        )
+
+        self.assertEqual(len(responses), 1)
+        response = responses[0]
+        self.assertEqual(response.text, "")
+        self.assertIsNone(response.token)
+        self.assertIsNone(response.logprobs)
+        self.assertFalse(response.from_draft)
+        self.assertEqual(response.generation_tokens, 0)
+        self.assertEqual(response.generation_tps, 0.0)
+        self.assertEqual(response.finish_reason, "length")
+        self._assert_transactional_prompt_cache(prompt_cache, len(prompt))
+
+        self.assertEqual(
+            generate(
+                self.model,
+                self.tokenizer,
+                prompt,
+                max_tokens=0,
+                mtp=True,
+                prompt_cache=make_prompt_cache(self.model),
+            ),
+            "",
+        )
 
     def test_mtp_prompt_cache_reuse_matches_uncached_generation(self):
         prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
@@ -461,43 +939,32 @@ class TestMTP(unittest.TestCase):
             ).item()
         )
 
-    def _collect_rejection_tokens(self, n_runs=60, **kwargs):
-        """Run mtp_generate_step n_runs times with max_tokens=1 and return all
-        rejection tokens (from_draft=False)."""
-        prompt = mx.array([0, 1, 2, 3], dtype=mx.uint32)
-        rejection_tokens: list[int] = []
-        for _ in range(n_runs):
-            for tok, _, from_draft in mtp_generate_step(
-                prompt, self.model, max_tokens=1, **kwargs
-            ):
-                if not from_draft:
-                    rejection_tokens.append(int(tok))
-        return rejection_tokens
-
-    def _assert_residual_varies(self, rejection_tokens, label=""):
-        self.assertGreaterEqual(
-            len(rejection_tokens),
-            5,
-            f"{label}Too few rejection events observed; increase n_runs",
-        )
-        self.assertGreater(
-            len(set(rejection_tokens)),
-            1,
-            f"{label}Rejection tokens are always identical, argmax bug likely present",
-        )
-
     def test_mtp_rejection_residual_sampling(self):
-        """On rejection at temp>0, the emitted token must be sampled from the
-        residual distribution max(p_target - p_draft, 0) / Z, not the backbone
-        argmax. The argmax is deterministic for a fixed model state, so rejection
-        tokens would always be identical. Residual sampling produces a
-        distribution, so tokens must vary across runs.
+        """A controlled rejection emits residual token 2, not target token 1."""
+        model = _ForcedRejectionMTPModel()
 
-        Using max_tokens=1 yields exactly one token per run: the accepted draft
-        (from_draft=True) or the rejection token (from_draft=False). This avoids
-        conflating rejection tokens with bonus tokens (also from_draft=False).
-        """
-        self._assert_residual_varies(self._collect_rejection_tokens(temp=1.0))
+        def controlled_sampling(logprobs, _temp):
+            # q has zero mass at token 2; p has zero mass at token 0.
+            is_draft = not mx.isfinite(logprobs[2]).item()
+            return mx.array([0 if is_draft else 1], dtype=mx.uint32)
+
+        with patch.object(
+            generate_module, "categorical_sampling", side_effect=controlled_sampling
+        ):
+            output = list(
+                mtp_generate_step(
+                    mx.array([0, 1, 2, 3], dtype=mx.uint32),
+                    model,
+                    max_tokens=2,
+                    temp=1.0,
+                )
+            )
+
+        self.assertEqual(model.verify_calls, 1)
+        self.assertEqual(len(output), 2)
+        self.assertEqual(int(output[0][0]), 1)
+        self.assertFalse(output[1][2])
+        self.assertEqual(int(output[1][0]), 2)
 
 
 if __name__ == "__main__":

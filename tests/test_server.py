@@ -3,13 +3,16 @@
 import http
 import io
 import json
+import queue
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import mlx.core as mx
 import requests
 
-from mlx_lm.generate import TextStateMachine
+from mlx_lm.generate import GenerationResponse, TextStateMachine
 from mlx_lm.models.cache import KVCache
 from mlx_lm.server import (
     APIHandler,
@@ -20,6 +23,256 @@ from mlx_lm.server import (
     _make_sampler,
 )
 from mlx_lm.utils import load
+
+
+class TestNativeMTPServerLaneSelection(unittest.TestCase):
+    class MTPModel:
+        supports_mtp = True
+        layers = []
+
+        def make_cache(self):
+            return []
+
+        def make_mtp_cache(self):
+            return [object()]
+
+    class Tokenizer:
+        has_thinking = False
+        has_tool_calling = False
+        tool_parser = None
+        eos_token_ids = set()
+
+        def encode(self, _text):
+            return []
+
+    class PromptCache:
+        def __init__(self, lifecycle=None):
+            self.insertions = []
+            self.lifecycle = lifecycle
+
+        def fetch_nearest_cache(self, _model_key, prompt):
+            return None, prompt
+
+        def insert_cache(self, model_key, cache_key, cache):
+            self.insertions.append(
+                (
+                    model_key,
+                    cache_key[:],
+                    cache,
+                    None
+                    if self.lifecycle is None
+                    else self.lifecycle["finalized"],
+                )
+            )
+
+    def _make_harness(self, *, draft_model=None, lifecycle=None, max_tokens=1):
+        model = self.MTPModel()
+        tokenizer = self.Tokenizer()
+        provider = SimpleNamespace(
+            model=model,
+            tokenizer=tokenizer,
+            draft_model=draft_model,
+            model_key=("target", None, "draft"),
+            cli_args=SimpleNamespace(mtp=True, prefill_step_size=2),
+        )
+        response_generator = ResponseGenerator.__new__(ResponseGenerator)
+        response_generator.model_provider = provider
+        response_generator.prompt_cache = self.PromptCache(lifecycle)
+        response_generator._is_distributed = False
+        response_generator._tokenize = lambda *_args: (
+            [0, 1],
+            [[0, 1]],
+            ["assistant"],
+            "normal",
+        )
+        stop_trie = {}
+        response_generator._make_state_machine = lambda *_args: (
+            SimpleNamespace(make_state=lambda: stop_trie, _trie=stop_trie),
+            object(),
+        )
+        response_generator._log_cache_stats = lambda: None
+
+        args = SimpleNamespace(
+            seed=None,
+            stop_words=[],
+            max_tokens=max_tokens,
+            num_draft_tokens=3,
+            sampling=SamplingArguments(0.7, 0.9, 0, 0.0, 0.0, 0.0),
+            top_logprobs=0,
+        )
+        return response_generator, provider, args
+
+    def test_mtp_sampler_routing(self):
+        model = self.MTPModel()
+        response_generator, provider, args = self._make_harness(draft_model=model)
+        sampler = object()
+        captured = {}
+
+        def capture_stream_generate(**kwargs):
+            captured.update(kwargs)
+            return iter(())
+
+        with (
+            patch("mlx_lm.server._make_sampler", return_value=sampler),
+            patch("mlx_lm.server._make_logits_processors", return_value=[]),
+            patch("mlx_lm.server.stream_generate", side_effect=capture_stream_generate),
+        ):
+            response_generator._serve_single((queue.Queue(), object(), args))
+
+        self.assertIs(captured["sampler"], sampler)
+        self.assertIs(captured["draft_model"], model)
+        self.assertTrue(captured["mtp"])
+
+        provider.draft_model = None
+        captured.clear()
+        with (
+            patch("mlx_lm.server._make_sampler", return_value=sampler),
+            patch("mlx_lm.server._make_logits_processors", return_value=[]),
+            patch("mlx_lm.server.stream_generate", side_effect=capture_stream_generate),
+        ):
+            response_generator._serve_single((queue.Queue(), object(), args))
+
+        self.assertIsNone(captured["sampler"])
+        self.assertIsNone(captured["draft_model"])
+        self.assertTrue(captured["mtp"])
+
+    def test_stop_response_is_published_after_generator_finalization(self):
+        lifecycle = {"closed": 0, "finalized": False}
+        response_generator, _, args = self._make_harness(lifecycle=lifecycle)
+        test_case = self
+
+        class ObservingQueue(queue.Queue):
+            def put(self, item, *put_args, **put_kwargs):
+                if isinstance(item, Response) and item.finish_reason == "stop":
+                    test_case.assertTrue(lifecycle["finalized"])
+                return super().put(item, *put_args, **put_kwargs)
+
+        def generation():
+            try:
+                yield GenerationResponse(
+                    text="token",
+                    token=7,
+                    logprobs=mx.zeros(16),
+                    from_draft=False,
+                    prompt_tokens=2,
+                    prompt_tps=1.0,
+                    generation_tokens=1,
+                    generation_tps=1.0,
+                    peak_memory=0.0,
+                    finish_reason=None,
+                )
+            finally:
+                lifecycle["closed"] += 1
+                lifecycle["finalized"] = True
+
+        rqueue = ObservingQueue()
+        with (
+            patch("mlx_lm.server._make_sampler", return_value=object()),
+            patch("mlx_lm.server._make_logits_processors", return_value=[]),
+            patch("mlx_lm.server.stream_generate", return_value=generation()),
+            patch(
+                "mlx_lm.server.StopSequenceMatcher.match",
+                return_value=(None, True),
+            ),
+        ):
+            response_generator._serve_single((rqueue, object(), args))
+
+        responses = []
+        while not rqueue.empty():
+            item = rqueue.get()
+            if isinstance(item, Response):
+                responses.append(item)
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].finish_reason, "stop")
+        self.assertEqual(lifecycle["closed"], 1)
+        self.assertTrue(response_generator.prompt_cache.insertions[0][3])
+
+    def test_cancellation_closes_generator_once(self):
+        lifecycle = {"closed": 0, "finalized": False}
+        response_generator, _, args = self._make_harness(lifecycle=lifecycle)
+
+        class CancellingQueue(queue.Queue):
+            def put(self, item, *put_args, **put_kwargs):
+                if hasattr(item, "stop"):
+                    item.stop()
+                return super().put(item, *put_args, **put_kwargs)
+
+        def generation():
+            try:
+                yield GenerationResponse(
+                    text="token",
+                    token=7,
+                    logprobs=mx.zeros(16),
+                    from_draft=False,
+                    prompt_tokens=2,
+                    prompt_tps=1.0,
+                    generation_tokens=1,
+                    generation_tps=1.0,
+                    peak_memory=0.0,
+                    finish_reason=None,
+                )
+            finally:
+                lifecycle["closed"] += 1
+                lifecycle["finalized"] = True
+
+        with (
+            patch("mlx_lm.server._make_sampler", return_value=object()),
+            patch("mlx_lm.server._make_logits_processors", return_value=[]),
+            patch("mlx_lm.server.stream_generate", return_value=generation()),
+        ):
+            response_generator._serve_single((CancellingQueue(), object(), args))
+
+        self.assertEqual(lifecycle["closed"], 1)
+        self.assertTrue(lifecycle["finalized"])
+        self.assertTrue(response_generator.prompt_cache.insertions[0][3])
+
+    def test_server_max_tokens_zero_publishes_terminal_and_inserts_cache(self):
+        lifecycle = {"closed": 0, "finalized": False}
+        response_generator, _, args = self._make_harness(
+            lifecycle=lifecycle, max_tokens=0
+        )
+
+        def generation():
+            try:
+                yield GenerationResponse(
+                    text="",
+                    token=None,
+                    logprobs=None,
+                    from_draft=False,
+                    prompt_tokens=2,
+                    prompt_tps=1.0,
+                    generation_tokens=0,
+                    generation_tps=0.0,
+                    peak_memory=0.0,
+                    finish_reason="length",
+                )
+            finally:
+                lifecycle["closed"] += 1
+                lifecycle["finalized"] = True
+
+        rqueue = queue.Queue()
+        with (
+            patch("mlx_lm.server._make_sampler", return_value=object()),
+            patch("mlx_lm.server._make_logits_processors", return_value=[]),
+            patch("mlx_lm.server.stream_generate", return_value=generation()),
+        ):
+            response_generator._serve_single((rqueue, object(), args))
+
+        items = []
+        while not rqueue.empty():
+            items.append(rqueue.get())
+        responses = [item for item in items if isinstance(item, Response)]
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].finish_reason, "length")
+        self.assertIsNone(responses[0].token)
+        self.assertIsNone(responses[0].logprob)
+        self.assertEqual(responses[0].top_tokens, ())
+        self.assertEqual(lifecycle["closed"], 1)
+        self.assertEqual(len(response_generator.prompt_cache.insertions), 1)
+        _, cache_key, _, finalized = response_generator.prompt_cache.insertions[0]
+        self.assertEqual(cache_key, [0, 1])
+        self.assertTrue(finalized)
+        self.assertIsNone(items[-1])
 
 
 class DummyModelProvider:
