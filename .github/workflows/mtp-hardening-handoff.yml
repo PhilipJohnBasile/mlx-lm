@@ -29,14 +29,30 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check patch-file applicability against the branch base
+      - name: Check the complete three-patch series
         shell: bash
         run: |
           set -euxo pipefail
           git apply --check patches/0001-mtp-accepted-token-target-logprobs.patch
+          git apply patches/0001-mtp-accepted-token-target-logprobs.patch
           git apply --check patches/0002-mtp-reject-stateful-logits-processors.patch
+          git apply patches/0002-mtp-reject-stateful-logits-processors.patch
+          git apply --check patches/0003-mtp-disable-unloaded-head.patch
+          git apply patches/0003-mtp-disable-unloaded-head.patch
+          python -m py_compile \
+            mlx_lm/generate.py \
+            mlx_lm/models/qwen3_5.py \
+            mlx_lm/models/qwen3_5_moe.py \
+            tests/test_mtp.py
+          grep -F 'yield draft_tok_id, verify_lp, True' mlx_lm/generate.py
+          grep -F 'supports only stateless logits processors' mlx_lm/generate.py
+          grep -F 'def _model_supports_mtp' mlx_lm/generate.py
+          grep -F 'def supports_mtp' mlx_lm/models/qwen3_5.py
+          git diff --check
+          git reset --hard HEAD
+          test -z "$(git status --short)"
 
-      - name: Exercise the guarded one-command applicator
+      - name: Exercise the guarded two-patch applicator
         shell: bash
         run: |
           set -euxo pipefail
@@ -73,11 +89,11 @@ jobs:
         run: |
           cat <<'EOF'
           This workflow validates only the handoff artifacts:
-          - the two small patch files still apply to the inspected branch point;
-          - the guarded applicator applies and reverses the same changes cleanly;
-          - the Python files parse;
+          - the three focused patches apply in order to the inspected branch point;
+          - modified Python files parse and the expected markers are present;
+          - the guarded two-patch applicator still applies and reverses cleanly;
           - the JSON manifest is valid.
 
-          It does not assert that the intentionally red runtime acceptance
-          suite passes before the remaining transactional hardening is integrated.
+          It does not assert that the intentionally red transactional-cache
+          acceptance suite passes before the remaining cache work is integrated.
           EOF
