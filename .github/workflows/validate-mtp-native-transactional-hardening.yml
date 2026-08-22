@@ -1,0 +1,227 @@
+name: Validate MTP transactional hardening
+
+on:
+  push:
+    branches:
+      - test/mtp-native-transactional-hardening-r2
+  pull_request:
+    branches:
+      - test/mtp-native-transactional-hardening-r2
+
+permissions:
+  contents: write
+
+concurrency:
+  group: validate-mtp-native-transactional-hardening-r2
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[skip validation]') }}
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Remove unrelated adapter-alias regression in validation tree
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("mlx_lm/server.py")
+          text = path.read_text()
+          old = '''    def load(self, model_path, adapter_path=None, draft_model_path=None):
+              model_path = self._model_map.get(model_path, model_path)
+              adapter_path = self._adapter_map.get(model_path, adapter_path)
+              draft_model_path = self._draft_model_map.get(draft_model_path, draft_model_path)
+          '''
+          new = '''    def load(self, model_path, adapter_path=None, draft_model_path=None):
+              adapter_path = self._adapter_map.get(model_path, adapter_path)
+              model_path = self._model_map.get(model_path, model_path)
+              draft_model_path = self._draft_model_map.get(draft_model_path, draft_model_path)
+          '''
+          if text.count(old) == 1:
+              path.write_text(text.replace(old, new, 1))
+          elif text.count(new) != 1:
+              raise RuntimeError("adapter-resolution block is neither original nor corrected")
+          PY
+
+      - id: setup
+        continue-on-error: true
+        uses: ./.github/actions/setup-macos
+        with:
+          python-version: "3.10"
+
+      - name: Run and capture upstream-equivalent validation gate
+        id: gate
+        continue-on-error: true
+        shell: bash -l {0}
+        run: |
+          set +e
+          LOG=/tmp/mtp-native-transactional-hardening-r2.log
+          RESULTS=/tmp/mtp-native-transactional-hardening-r2-results.txt
+          : > "$LOG"
+          : > "$RESULTS"
+
+          run_gate() {
+            label="$1"
+            shift
+            echo "===== ${label} =====" | tee -a "$LOG"
+            "$@" 2>&1 | tee -a "$LOG"
+            code=${PIPESTATUS[0]}
+            echo "${label}=${code}" | tee -a "$LOG" "$RESULTS"
+            return 0
+          }
+
+          run_gate install_validation_dependencies \
+            pip install pre-commit unittest-xml-reporting
+          run_gate install_editable_package \
+            pip install -e ".[test]"
+          run_gate pre_commit \
+            pre-commit run --all-files
+          run_gate diff_check \
+            git diff --check
+          run_gate focused_mtp_tests \
+            python -m unittest -v tests.test_mtp
+          run_gate download_test_data \
+            curl -o test_data.zip -L \
+              https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
+          run_gate unpack_test_data \
+            unzip -q -o test_data.zip
+
+          echo "===== full_test_suite =====" | tee -a "$LOG"
+          METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 HF_HOME="." \
+            python -m xmlrunner discover -v tests -o test-results/ \
+            2>&1 | tee -a "$LOG"
+          code=${PIPESTATUS[0]}
+          echo "full_test_suite=${code}" | tee -a "$LOG" "$RESULTS"
+
+          run_gate model_parallel_smoke \
+            mlx.launch -n 2 tests/model_parallel_tests.py
+
+          overall=0
+          while IFS='=' read -r label code; do
+            if [[ "$code" != "0" ]]; then
+              overall=1
+            fi
+          done < "$RESULTS"
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+          exit "$overall"
+
+      - name: Publish corrected candidate branch
+        id: candidate
+        if: ${{ steps.setup.outcome == 'success' && steps.gate.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch origin fix/mtp-native-transactional-hardening
+          rm -rf /tmp/mtp-candidate
+          git worktree add --detach /tmp/mtp-candidate \
+            origin/fix/mtp-native-transactional-hardening
+          cd /tmp/mtp-candidate
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("mlx_lm/server.py")
+          text = path.read_text()
+          old = '''    def load(self, model_path, adapter_path=None, draft_model_path=None):
+              model_path = self._model_map.get(model_path, model_path)
+              adapter_path = self._adapter_map.get(model_path, adapter_path)
+              draft_model_path = self._draft_model_map.get(draft_model_path, draft_model_path)
+          '''
+          new = '''    def load(self, model_path, adapter_path=None, draft_model_path=None):
+              adapter_path = self._adapter_map.get(model_path, adapter_path)
+              model_path = self._model_map.get(model_path, model_path)
+              draft_model_path = self._draft_model_map.get(draft_model_path, draft_model_path)
+          '''
+          if text.count(old) == 1:
+              path.write_text(text.replace(old, new, 1))
+          elif text.count(new) != 1:
+              raise RuntimeError("adapter-resolution block is neither original nor corrected")
+          PY
+
+          git diff --check
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "Philip John Basile"
+            git config user.email "PBasile@Basilecom.com"
+            git add mlx_lm/server.py
+            git commit -m "fix(server): preserve adapter alias resolution
+
+Signed-off-by: Philip John Basile <PBasile@Basilecom.com>"
+            git push origin HEAD:fix/mtp-native-transactional-hardening
+          fi
+          corrected_sha=$(git rev-parse HEAD)
+          echo "$corrected_sha" > /tmp/mtp-corrected-candidate-sha
+          echo "sha=${corrected_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish validation receipt
+        id: receipt
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          SETUP_OUTCOME: ${{ steps.setup.outcome }}
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
+          GATE_RESULT: ${{ steps.gate.outputs.overall }}
+          CANDIDATE_OUTCOME: ${{ steps.candidate.outcome }}
+          CORRECTED_SHA: ${{ steps.candidate.outputs.sha }}
+          SOURCE_CANDIDATE_SHA: 6051d83c22f30e924578f074a6962815b4055287
+          BASE_SHA: e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b
+        run: |
+          git fetch origin test/mtp-native-transactional-hardening-r2
+          rm -rf /tmp/mtp-receipt
+          git worktree add --detach /tmp/mtp-receipt \
+            origin/test/mtp-native-transactional-hardening-r2
+          cd /tmp/mtp-receipt
+          mkdir -p validation
+
+          if [[ -f /tmp/mtp-native-transactional-hardening-r2.log ]]; then
+            cp /tmp/mtp-native-transactional-hardening-r2.log \
+              validation/mtp-native-transactional-hardening-r2.log
+          fi
+          if [[ -f /tmp/mtp-native-transactional-hardening-r2-results.txt ]]; then
+            cp /tmp/mtp-native-transactional-hardening-r2-results.txt \
+              validation/mtp-native-transactional-hardening-r2-results.txt
+          fi
+          if [[ -z "$CORRECTED_SHA" && -f /tmp/mtp-corrected-candidate-sha ]]; then
+            CORRECTED_SHA=$(cat /tmp/mtp-corrected-candidate-sha)
+          fi
+          if [[ -z "$CORRECTED_SHA" ]]; then
+            CORRECTED_SHA="$SOURCE_CANDIDATE_SHA"
+          fi
+
+          if [[ "$SETUP_OUTCOME" == "success" && "$GATE_OUTCOME" == "success" && "$GATE_RESULT" == "0" && "$CANDIDATE_OUTCOME" == "success" ]]; then
+            RESULT=PASS
+          else
+            RESULT=FAIL
+          fi
+
+          cat > validation/mtp-native-transactional-hardening-r2-receipt.md <<EOF
+          # Native MTP transactional hardening validation
+
+          - result: **${RESULT}**
+          - validated candidate tree: \`${CORRECTED_SHA}\`
+          - source candidate: \`${SOURCE_CANDIDATE_SHA}\`
+          - AirRunner base: \`${BASE_SHA}\`
+          - setup outcome: \`${SETUP_OUTCOME}\`
+          - gate outcome: \`${GATE_OUTCOME}\`
+          - gate result: \`${GATE_RESULT:-unavailable}\`
+          - corrected-branch publication: \`${CANDIDATE_OUTCOME:-not-run}\`
+          - runner: \`macos-14\`
+          - recorded: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
+
+          The detailed command output and per-gate exit codes are stored beside this receipt.
+          EOF
+
+          git config user.name "Philip John Basile"
+          git config user.email "PBasile@Basilecom.com"
+          git add validation/
+          git commit -m "ci: record corrected MTP validation ${RESULT} [skip validation]"
+          git push origin HEAD:test/mtp-native-transactional-hardening-r2
+
+      - name: Preserve failing workflow status
+        if: ${{ steps.setup.outcome != 'success' || steps.gate.outcome != 'success' || steps.candidate.outcome != 'success' || steps.receipt.outcome != 'success' }}
+        run: exit 1
