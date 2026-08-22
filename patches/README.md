@@ -1,18 +1,20 @@
 # Native MTP hardening patches
 
-These patches are deliberately small and apply to AirRunner's inspected
-`feat/mtp-native` head:
+These patches are deliberately focused and apply in order to AirRunner's
+inspected `feat/mtp-native` head:
 
 ```text
 e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b
 ```
 
 They do **not** choose the disputed `ArraysCache` / `make_draft_model`
-architecture and do not implement transactional prompt-cache reuse. They only
-package the two semantics that are independent of that decision:
+architecture and do not implement transactional prompt-cache reuse. They
+package the semantics that remain independent of that decision:
 
 1. accepted drafts expose target/verifier log probabilities;
-2. unknown stateful `logits_processors` fail closed.
+2. unknown stateful `logits_processors` fail closed;
+3. a configured MTP head whose tensors are absent is disabled safely rather
+   than treated as usable or allowed to crash MoE sanitization.
 
 ## Apply
 
@@ -21,7 +23,8 @@ From a clean checkout of the target branch:
 ```bash
 git am \
   patches/0001-mtp-accepted-token-target-logprobs.patch \
-  patches/0002-mtp-reject-stateful-logits-processors.patch
+  patches/0002-mtp-reject-stateful-logits-processors.patch \
+  patches/0003-mtp-disable-unloaded-head.patch
 ```
 
 When applying from another clone, fetch or copy the patch files first. To apply
@@ -30,6 +33,19 @@ without creating commits:
 ```bash
 git apply patches/0001-mtp-accepted-token-target-logprobs.patch
 git apply patches/0002-mtp-reject-stateful-logits-processors.patch
+git apply patches/0003-mtp-disable-unloaded-head.patch
+```
+
+A materialization workflow publishes the exact three-commit result to:
+
+```text
+PhilipJohnBasile/mlx-lm:mtp-native-hardening-applied-20260822-r2
+```
+
+The earlier two-commit branch remains archived at:
+
+```text
+PhilipJohnBasile/mlx-lm:archive-mtp-native-hardening-applied-20260822
 ```
 
 ## Validate
@@ -41,9 +57,9 @@ all promised semantics:
 python -m pytest -q tests/test_mtp_hardening_handoff.py
 ```
 
-After applying these two patches, the accepted-logprob and stateful-processor
-tests should move toward green. The transactional-cache and usable-head tests
-remain expected failures until their architecture is integrated.
+After applying all three patches, the accepted-logprob, stateful-processor, and
+usable-head cases should move toward green. The transactional-cache tests remain
+expected failures until that architecture is integrated.
 
 Run the existing focused tests as well:
 
@@ -60,7 +76,7 @@ python tools/check_mtp_hardening_markers.py
 
 ## Attribution
 
-The reference implementation is ml-explore/mlx-lm#990 by AirRunner. These two
+The reference implementation is ml-explore/mlx-lm#990 by AirRunner. These
 fixes and the broader transactional-cache hardening were preserved from closed
 ml-explore/mlx-lm#1740 at:
 
