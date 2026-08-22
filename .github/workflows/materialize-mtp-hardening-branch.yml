@@ -1,0 +1,65 @@
+name: Materialize cherry-pickable MTP hardening branch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - handoff-mtp-native-hardening-20260822
+    paths:
+      - .github/workflows/materialize-mtp-hardening-branch.yml
+      - patches/0001-mtp-accepted-token-target-logprobs.patch
+      - patches/0002-mtp-reject-stateful-logits-processors.patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-mtp-hardening-branch
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA: e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b
+      TARGET_BRANCH: mtp-native-hardening-applied-20260822
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Preserve the reviewed patch series
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp patches/0001-mtp-accepted-token-target-logprobs.patch /tmp/0001.patch
+          cp patches/0002-mtp-reject-stateful-logits-processors.patch /tmp/0002.patch
+
+      - name: Rebuild from AirRunner's exact inspected head
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git switch --detach "${BASE_SHA}"
+          git am /tmp/0001.patch
+          git am /tmp/0002.patch
+          python -m py_compile mlx_lm/generate.py
+          grep -F 'yield draft_tok_id, verify_lp, True' mlx_lm/generate.py
+          grep -F 'supports only stateless logits processors' mlx_lm/generate.py
+          test "$(git rev-list --count "${BASE_SHA}..HEAD")" -eq 2
+          git diff --check "${BASE_SHA}..HEAD"
+
+      - name: Publish the code-only branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git push --force origin "HEAD:refs/heads/${TARGET_BRANCH}"
+          {
+            echo "## Native MTP hardening branch"
+            echo
+            echo "Base: \`${BASE_SHA}\`"
+            echo "Branch: \`${TARGET_BRANCH}\`"
+            echo
+            echo "Commits:"
+            git log --oneline --reverse "${BASE_SHA}..HEAD"
+          } >> "${GITHUB_STEP_SUMMARY}"
