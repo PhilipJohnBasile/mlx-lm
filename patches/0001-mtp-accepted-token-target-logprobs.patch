@@ -1,0 +1,32 @@
+From: Philip John Basile <PBasile@Basilecom.com>
+Subject: [PATCH 1/2] fix(mtp): report target logprobs for accepted drafts
+
+An accepted speculative token is an output of the target distribution. Return
+the verifier/target log-probability vector rather than the MTP draft-head
+vector.
+
+This patch is scoped to AirRunner/mlx-lm feat/mtp-native at
+`e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b`.
+
+Source: ml-explore/mlx-lm#1740,
+PhilipJohnBasile/mlx-lm@bc1d11414c12372cdf76538e09ce1fbc54b7fc7b
+
+Signed-off-by: Philip John Basile <PBasile@Basilecom.com>
+---
+ mlx_lm/generate.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mlx_lm/generate.py b/mlx_lm/generate.py
+--- a/mlx_lm/generate.py
++++ b/mlx_lm/generate.py
+@@ -905,7 +905,7 @@ def mtp_generate_step(
+             if accept:
+                 _clear_rollback()
+                 ntoks += 1
+-                yield draft_tok_id, draft_lp, True
++                yield draft_tok_id, verify_lp, True
+                 if ntoks >= max_tokens:
+                     return
+                 ntoks += 1
+-- 
+2.50.1
