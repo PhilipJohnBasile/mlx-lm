@@ -6,48 +6,130 @@ on:
       - test/mtp-native-transactional-hardening
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: validate-mtp-native-transactional-hardening
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
+    if: ${{ !contains(github.event.head_commit.message, '[skip validation]') }}
     runs-on: macos-14
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
 
-      - uses: ./.github/actions/setup-macos
+      - id: setup
+        continue-on-error: true
+        uses: ./.github/actions/setup-macos
         with:
           python-version: "3.10"
 
-      - name: Install validation dependencies
+      - name: Run and capture upstream-equivalent validation gate
+        id: gate
+        continue-on-error: true
         shell: bash -l {0}
         run: |
-          pip install pre-commit unittest-xml-reporting
-          pip install -e ".[test]"
+          set +e
+          LOG=/tmp/mtp-native-transactional-hardening.log
+          RESULTS=/tmp/mtp-native-transactional-hardening-results.txt
+          : > "$LOG"
+          : > "$RESULTS"
 
-      - name: Check formatting and lint
-        shell: bash -l {0}
-        run: |
-          pre-commit run --all-files
-          git diff --check
+          run_gate() {
+            label="$1"
+            shift
+            echo "===== ${label} =====" | tee -a "$LOG"
+            "$@" 2>&1 | tee -a "$LOG"
+            code=${PIPESTATUS[0]}
+            echo "${label}=${code}" | tee -a "$LOG" "$RESULTS"
+            return 0
+          }
 
-      - name: Run focused native-MTP tests
-        shell: bash -l {0}
-        run: python -m unittest -v tests.test_mtp
+          run_gate install_validation_dependencies \
+            pip install pre-commit unittest-xml-reporting
+          run_gate install_editable_package \
+            pip install -e ".[test]"
+          run_gate pre_commit \
+            pre-commit run --all-files
+          run_gate diff_check \
+            git diff --check
+          run_gate focused_mtp_tests \
+            python -m unittest -v tests.test_mtp
+          run_gate download_test_data \
+            curl -o test_data.zip -L \
+              https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
+          run_gate unpack_test_data \
+            unzip -q -o test_data.zip
 
-      - name: Download upstream test data
-        shell: bash -l {0}
-        run: |
-          curl -o test_data.zip -L https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
-          unzip -q test_data.zip
-
-      - name: Run upstream-equivalent full test gate
-        shell: bash -l {0}
-        run: |
+          echo "===== full_test_suite =====" | tee -a "$LOG"
           METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 HF_HOME="." \
-            python -m xmlrunner discover -v tests -o test-results/
-          mlx.launch -n 2 tests/model_parallel_tests.py
+            python -m xmlrunner discover -v tests -o test-results/ \
+            2>&1 | tee -a "$LOG"
+          code=${PIPESTATUS[0]}
+          echo "full_test_suite=${code}" | tee -a "$LOG" "$RESULTS"
+
+          run_gate model_parallel_smoke \
+            mlx.launch -n 2 tests/model_parallel_tests.py
+
+          overall=0
+          while IFS='=' read -r label code; do
+            if [[ "$code" != "0" ]]; then
+              overall=1
+            fi
+          done < "$RESULTS"
+          echo "overall=${overall}" >> "$GITHUB_OUTPUT"
+          exit "$overall"
+
+      - name: Publish validation receipt
+        if: always()
+        shell: bash
+        env:
+          SETUP_OUTCOME: ${{ steps.setup.outcome }}
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
+          GATE_RESULT: ${{ steps.gate.outputs.overall }}
+          CANDIDATE_SHA: 6051d83c22f30e924578f074a6962815b4055287
+          BASE_SHA: e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b
+        run: |
+          git reset --hard HEAD
+          mkdir -p validation
+          if [[ -f /tmp/mtp-native-transactional-hardening.log ]]; then
+            cp /tmp/mtp-native-transactional-hardening.log \
+              validation/mtp-native-transactional-hardening.log
+          fi
+          if [[ -f /tmp/mtp-native-transactional-hardening-results.txt ]]; then
+            cp /tmp/mtp-native-transactional-hardening-results.txt \
+              validation/mtp-native-transactional-hardening-results.txt
+          fi
+
+          if [[ "$SETUP_OUTCOME" == "success" && "$GATE_OUTCOME" == "success" && "$GATE_RESULT" == "0" ]]; then
+            RESULT=PASS
+          else
+            RESULT=FAIL
+          fi
+
+          cat > validation/mtp-native-transactional-hardening-receipt.md <<EOF
+          # Native MTP transactional hardening validation
+
+          - result: **${RESULT}**
+          - candidate: \`${CANDIDATE_SHA}\`
+          - base: \`${BASE_SHA}\`
+          - setup outcome: \`${SETUP_OUTCOME}\`
+          - gate outcome: \`${GATE_OUTCOME}\`
+          - gate result: \`${GATE_RESULT:-unavailable}\`
+          - runner: \`macos-14\`
+          - recorded: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
+
+          The detailed command output and per-gate exit codes are stored beside this receipt.
+          EOF
+
+          git config user.name "Philip John Basile"
+          git config user.email "PBasile@Basilecom.com"
+          git add validation/
+          git commit -m "ci: record MTP hardening validation ${RESULT} [skip validation]"
+          git push origin HEAD:test/mtp-native-transactional-hardening
+
+      - name: Preserve failing workflow status
+        if: ${{ steps.setup.outcome != 'success' || steps.gate.outcome != 'success' }}
+        run: exit 1
