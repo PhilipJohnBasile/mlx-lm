@@ -1,0 +1,53 @@
+name: Validate MTP transactional hardening
+
+on:
+  push:
+    branches:
+      - test/mtp-native-transactional-hardening
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-mtp-native-transactional-hardening
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-macos
+        with:
+          python-version: "3.10"
+
+      - name: Install validation dependencies
+        shell: bash -l {0}
+        run: |
+          pip install pre-commit unittest-xml-reporting
+          pip install -e ".[test]"
+
+      - name: Check formatting and lint
+        shell: bash -l {0}
+        run: |
+          pre-commit run --all-files
+          git diff --check
+
+      - name: Run focused native-MTP tests
+        shell: bash -l {0}
+        run: python -m unittest -v tests.test_mtp
+
+      - name: Download upstream test data
+        shell: bash -l {0}
+        run: |
+          curl -o test_data.zip -L https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
+          unzip -q test_data.zip
+
+      - name: Run upstream-equivalent full test gate
+        shell: bash -l {0}
+        run: |
+          METAL_DEVICE_WRAPPER_TYPE=1 METAL_DEBUG_ERROR_MODE=0 HF_HOME="." \
+            python -m xmlrunner discover -v tests -o test-results/
+          mlx.launch -n 2 tests/model_parallel_tests.py
