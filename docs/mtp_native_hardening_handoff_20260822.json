@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-22",
+  "branch": {
+    "repository": "PhilipJohnBasile/mlx-lm",
+    "name": "handoff-mtp-native-hardening-20260822",
+    "base_sha": "e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b",
+    "base_source": "AirRunner:feat/mtp-native",
+    "opens_pull_request": false,
+    "expected_test_state_at_base": "red"
+  },
+  "source": {
+    "pull_request": "ml-explore/mlx-lm#1740",
+    "sha": "bc1d11414c12372cdf76538e09ce1fbc54b7fc7b",
+    "archive_branch": "PhilipJohnBasile/mlx-lm:archive-1740-final-20260822"
+  },
+  "carry_forward": [
+    {
+      "id": "usable_mtp_head",
+      "behavior": "methods alone do not enable native MTP when trained weights are absent",
+      "current_source_marker": "_model_supports_mtp",
+      "tests": [
+        "test_missing_dense_mtp_weights_disable_the_head",
+        "test_missing_moe_mtp_weights_disable_the_head_without_crashing"
+      ]
+    },
+    {
+      "id": "stateful_logits_processor_guard",
+      "behavior": "unknown stateful processor objects fail closed; supported stateless processors retain parity",
+      "current_source_marker": "stateless logits processors",
+      "tests": [
+        "test_stateful_logits_processor_fails_closed",
+        "test_mtp_generate_identity_with_logits_processor",
+        "test_mtp_processor_prev_tokens_correct_at_draft_step"
+      ]
+    },
+    {
+      "id": "accepted_target_logprobs",
+      "behavior": "an accepted MTP draft yields the target/verifier log-probability vector",
+      "incorrect_marker_at_base": "yield draft_tok_id, draft_lp, True",
+      "current_source_marker": "yield draft_tok_id, verify_lp, True",
+      "tests": [
+        "test_accepted_draft_reports_target_distribution"
+      ]
+    },
+    {
+      "id": "transactional_prompt_cache",
+      "behavior": "target, MTP-head, and boundary state remain aligned across limits, close, later turns, and serialization",
+      "current_source_marker": "MTPPromptCacheState",
+      "tests": [
+        "test_populated_target_cache_without_mtp_boundary_fails_closed",
+        "test_prompt_cache_finalizes_at_output_limit",
+        "test_prompt_cache_finalizes_when_generator_is_closed",
+        "test_multi_turn_cached_generation_matches_uncached_generation",
+        "test_prompt_cache_boundary_state_round_trips"
+      ]
+    }
+  ],
+  "files": {
+    "semantic_manifest": "docs/mtp_native_hardening_handoff_20260822.md",
+    "machine_manifest": "docs/mtp_native_hardening_handoff_20260822.json",
+    "tests_first": "tests/test_mtp_hardening_handoff.py",
+    "static_marker_check": "tools/check_mtp_hardening_markers.py"
+  },
+  "integration_policy": {
+    "preserve_exact_function_structure": false,
+    "preserve_observable_semantics": true,
+    "compatible_with_make_draft_model_refactor": true,
+    "attribution": "Reference #1740 and bc1d114; preserve authorship when copying code directly",
+    "merge_authorization": "AirRunner may integrate and refactor without waiting for Philip during the August 26 vacation"
+  },
+  "completion_criteria": [
+    "tests/test_mtp_hardening_handoff.py passes or equivalent canonical tests pass",
+    "tools/check_mtp_hardening_markers.py passes or markers are replaced by documented equivalent regressions",
+    "accepted-token public logprobs are target/verifier distributions",
+    "populated cache reuse fails closed without compatible boundary metadata",
+    "prompt-cache state finalizes on output limit and generator close",
+    "multi-turn cached and uncached output parity passes",
+    "prompt-cache serialization round trip passes",
+    "landed implementation is reviewed and present on mlx-lm/main"
+  ]
+}
