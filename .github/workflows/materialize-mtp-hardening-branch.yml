@@ -9,6 +9,9 @@ on:
       - .github/workflows/materialize-mtp-hardening-branch.yml
       - patches/0001-mtp-accepted-token-target-logprobs.patch
       - patches/0002-mtp-reject-stateful-logits-processors.patch
+  pull_request:
+    branches:
+      - handoff-mtp-native-hardening-20260822
 
 permissions:
   contents: write
