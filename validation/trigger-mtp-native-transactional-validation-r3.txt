@@ -1,0 +1,1 @@
+Trigger the recognized macOS validation workflow for the corrected MTP hardening tree.
