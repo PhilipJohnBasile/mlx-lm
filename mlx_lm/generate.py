@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import copy
+import inspect
 import json
 import math
 import sys
@@ -693,6 +694,22 @@ def mtp_generate_step(
             ``from_draft`` is ``True`` when the token came from the MTP head.
     """
     validate_prompt_and_embeddings(model, prompt, input_embeddings)
+
+    if logits_processors:
+        unsafe_processors = [
+            type(processor).__name__
+            for processor in logits_processors
+            if not inspect.isfunction(processor)
+            and not isinstance(processor, partial)
+            and not getattr(processor, "is_stateless", False)
+        ]
+        if unsafe_processors:
+            names = ", ".join(unsafe_processors)
+            raise ValueError(
+                "Native MTP currently supports only stateless logits processors. "
+                "Use plain functions, functools.partial, or set is_stateless=True "
+                f"on a safe callable. Unsupported processor(s): {names}."
+            )
 
     y = prompt.astype(mx.uint32)
     prev_tokens = None
