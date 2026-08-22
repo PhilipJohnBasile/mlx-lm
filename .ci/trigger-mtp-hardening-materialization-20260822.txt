@@ -1,0 +1,4 @@
+Temporary same-repository PR trigger for the handoff materialization workflow.
+
+This branch contains no implementation change and will be closed after the
+workflow publishes the code-only branch.
