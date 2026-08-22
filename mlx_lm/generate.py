@@ -926,7 +926,7 @@ def mtp_generate_step(
             if accept:
                 _clear_rollback()
                 ntoks += 1
-                yield draft_tok_id, draft_lp, True
+                yield draft_tok_id, verify_lp, True
                 if ntoks >= max_tokens:
                     return
                 ntoks += 1
