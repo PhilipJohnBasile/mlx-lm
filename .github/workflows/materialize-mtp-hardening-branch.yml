@@ -9,6 +9,7 @@ on:
       - .github/workflows/materialize-mtp-hardening-branch.yml
       - patches/0001-mtp-accepted-token-target-logprobs.patch
       - patches/0002-mtp-reject-stateful-logits-processors.patch
+      - patches/0003-mtp-disable-unloaded-head.patch
   pull_request:
     branches:
       - handoff-mtp-native-hardening-20260822
@@ -25,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BASE_SHA: e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b
-      TARGET_BRANCH: mtp-native-hardening-applied-20260822
+      TARGET_BRANCH: mtp-native-hardening-applied-20260822-r2
     steps:
       - uses: actions/checkout@v5
         with:
@@ -37,6 +38,7 @@ jobs:
           set -euxo pipefail
           cp patches/0001-mtp-accepted-token-target-logprobs.patch /tmp/0001.patch
           cp patches/0002-mtp-reject-stateful-logits-processors.patch /tmp/0002.patch
+          cp patches/0003-mtp-disable-unloaded-head.patch /tmp/0003.patch
 
       - name: Rebuild from AirRunner's exact inspected head
         shell: bash
@@ -48,10 +50,17 @@ jobs:
           git switch --detach "${BASE_SHA}"
           git am /tmp/0001.patch
           git am /tmp/0002.patch
-          python -m py_compile mlx_lm/generate.py
+          git am /tmp/0003.patch
+          python -m py_compile \
+            mlx_lm/generate.py \
+            mlx_lm/models/qwen3_5.py \
+            mlx_lm/models/qwen3_5_moe.py \
+            tests/test_mtp.py
           grep -F 'yield draft_tok_id, verify_lp, True' mlx_lm/generate.py
           grep -F 'supports only stateless logits processors' mlx_lm/generate.py
-          test "$(git rev-list --count "${BASE_SHA}..HEAD")" -eq 2
+          grep -F 'def _model_supports_mtp' mlx_lm/generate.py
+          grep -F 'def supports_mtp' mlx_lm/models/qwen3_5.py
+          test "$(git rev-list --count "${BASE_SHA}..HEAD")" -eq 3
           git diff --check "${BASE_SHA}..HEAD"
 
       - name: Publish the code-only branch
