@@ -1,0 +1,55 @@
+From: Philip John Basile <PBasile@Basilecom.com>
+Subject: [PATCH 2/2] fix(mtp): fail closed on stateful logits processors
+
+Native MTP evaluates draft and verifier distributions through separate calls.
+An opaque stateful processor can therefore advance differently and invalidate
+the acceptance calculation. Permit functions, functools.partial, and callables
+that explicitly advertise `is_stateless=True`; reject unknown callable objects.
+
+This patch is scoped to AirRunner/mlx-lm feat/mtp-native at
+`e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b`.
+
+Source: ml-explore/mlx-lm#1740,
+PhilipJohnBasile/mlx-lm@bc1d11414c12372cdf76538e09ce1fbc54b7fc7b
+
+Signed-off-by: Philip John Basile <PBasile@Basilecom.com>
+---
+ mlx_lm/generate.py | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/mlx_lm/generate.py b/mlx_lm/generate.py
+--- a/mlx_lm/generate.py
++++ b/mlx_lm/generate.py
+@@ -3,6 +3,7 @@
+ import argparse
+ import contextlib
+ import copy
++import inspect
+ import json
+ import math
+ import sys
+@@ -686,6 +687,22 @@ def mtp_generate_step(
+     """
+     validate_prompt_and_embeddings(model, prompt, input_embeddings)
+ 
++    if logits_processors:
++        unsafe_processors = [
++            type(processor).__name__
++            for processor in logits_processors
++            if not inspect.isfunction(processor)
++            and not isinstance(processor, partial)
++            and not getattr(processor, "is_stateless", False)
++        ]
++        if unsafe_processors:
++            names = ", ".join(unsafe_processors)
++            raise ValueError(
++                "Native MTP currently supports only stateless logits processors. "
++                "Use plain functions, functools.partial, or set is_stateless=True "
++                f"on a safe callable. Unsupported processor(s): {names}."
++            )
++
+     y = prompt.astype(mx.uint32)
+     prev_tokens = None
+ 
+-- 
+2.50.1
