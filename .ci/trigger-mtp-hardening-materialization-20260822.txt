@@ -1,4 +1,7 @@
 Temporary same-repository PR trigger for the handoff materialization workflow.
 
+Retry 2: the base workflow now configures an explicit committer identity before
+running `git am`.
+
 This branch contains no implementation change and will be closed after the
 workflow publishes the code-only branch.
