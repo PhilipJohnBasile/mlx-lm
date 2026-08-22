@@ -1,0 +1,65 @@
+name: Native MTP hardening handoff artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - handoff-mtp-native-hardening-20260822
+    paths:
+      - .github/workflows/mtp-hardening-handoff.yml
+      - docs/mtp_native_hardening_handoff_20260822.md
+      - docs/mtp_native_hardening_handoff_20260822.json
+      - patches/**
+      - tests/test_mtp_hardening_handoff.py
+      - tools/check_mtp_hardening_markers.py
+
+permissions:
+  contents: read
+
+jobs:
+  artifact-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Check patch applicability against the branch base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git apply --check patches/0001-mtp-accepted-token-target-logprobs.patch
+          git apply --check patches/0002-mtp-reject-stateful-logits-processors.patch
+
+      - name: Compile handoff Python files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m py_compile \
+            tests/test_mtp_hardening_handoff.py \
+            tools/check_mtp_hardening_markers.py
+
+      - name: Validate machine-readable manifest
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m json.tool \
+            docs/mtp_native_hardening_handoff_20260822.json \
+            >/dev/null
+
+      - name: Explain scope
+        shell: bash
+        run: |
+          cat <<'EOF'
+          This workflow validates only the handoff artifacts:
+          - the two small patches still apply to the inspected branch point;
+          - the Python files parse;
+          - the JSON manifest is valid.
+
+          It does not assert that the intentionally red runtime acceptance
+          suite passes before the remaining hardening is integrated.
+          EOF
