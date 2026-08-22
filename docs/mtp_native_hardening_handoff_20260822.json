@@ -60,7 +60,31 @@
     "semantic_manifest": "docs/mtp_native_hardening_handoff_20260822.md",
     "machine_manifest": "docs/mtp_native_hardening_handoff_20260822.json",
     "tests_first": "tests/test_mtp_hardening_handoff.py",
-    "static_marker_check": "tools/check_mtp_hardening_markers.py"
+    "static_marker_check": "tools/check_mtp_hardening_markers.py",
+    "patch_readme": "patches/README.md",
+    "artifact_integrity_workflow": ".github/workflows/mtp-hardening-handoff.yml"
+  },
+  "focused_patches": [
+    {
+      "path": "patches/0001-mtp-accepted-token-target-logprobs.patch",
+      "behavior": "accepted draft exposes verifier/target log-probability vector",
+      "architecture_independent": true
+    },
+    {
+      "path": "patches/0002-mtp-reject-stateful-logits-processors.patch",
+      "behavior": "unknown stateful logits processors fail closed",
+      "architecture_independent": true
+    }
+  ],
+  "artifact_integrity": {
+    "workflow": ".github/workflows/mtp-hardening-handoff.yml",
+    "checks": [
+      "git apply --check for both focused patches",
+      "Python compilation for tests-first and marker-check files",
+      "JSON parsing for this manifest"
+    ],
+    "runtime_correctness_claimed": false,
+    "workflow_visibility_note": "The connector's commit-run wrapper exposes pull-request-triggered runs only; no push-run result is claimed here."
   },
   "integration_policy": {
     "preserve_exact_function_structure": false,
