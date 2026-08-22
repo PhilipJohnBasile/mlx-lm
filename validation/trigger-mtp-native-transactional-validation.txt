@@ -1,1 +1,2 @@
 Trigger the temporary PR event for the macOS transactional MTP validation workflow.
+Final branch-squash synchronization: 2026-08-22T22:56:00Z
