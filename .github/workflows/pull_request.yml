@@ -87,33 +87,45 @@ jobs:
 
           git config user.name "Philip John Basile"
           git config user.email "PBasile@Basilecom.com"
-          git commit -m "fix(mtp): harden transactional cache, logprobs, and guards
+          git commit -F - <<'COMMIT_MESSAGE'
+          fix(mtp): harden transactional cache, logprobs, and guards
 
-Carry the selected correctness work from ml-explore/mlx-lm#1740 onto
-AirRunner/mlx-lm:feat/mtp-native at e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b.
+          Carry the selected correctness work from ml-explore/mlx-lm#1740 onto
+          AirRunner/mlx-lm:feat/mtp-native at e8ceeccf118d4a089e22431f28f89d5ffe7d9d2b.
 
-This preserves transactional multi-turn prompt-cache alignment and
-finalization, target/verifier log probabilities for accepted drafts,
-usable-head detection, fail-closed logits-processor handling, and the
-focused regression coverage.
+          This preserves transactional multi-turn prompt-cache alignment and
+          finalization, target/verifier log probabilities for accepted drafts,
+          usable-head detection, fail-closed logits-processor handling, and the
+          focused regression coverage.
 
-Source: PhilipJohnBasile/mlx-lm@bc1d11414c12372cdf76538e09ce1fbc54b7fc7b
+          Source: PhilipJohnBasile/mlx-lm@bc1d11414c12372cdf76538e09ce1fbc54b7fc7b
 
-Signed-off-by: Philip John Basile <PBasile@Basilecom.com>"
+          Signed-off-by: Philip John Basile <PBasile@Basilecom.com>
+          COMMIT_MESSAGE
 
           test "$(git rev-parse HEAD^)" = "$BASE_SHA"
-          expected=$(cat <<'EOF'
+          expected=$(cat <<'EXPECTED_FILES'
           mlx_lm/generate.py
           mlx_lm/models/cache.py
           mlx_lm/models/qwen3_5.py
           mlx_lm/models/qwen3_5_moe.py
           mlx_lm/server.py
           tests/test_mtp.py
-          EOF
+          EXPECTED_FILES
           )
           actual=$(git diff --name-only "$BASE_SHA" HEAD | sort)
-          test "$actual" = "$(printf '%s\n' "$expected" | sed 's/^          //' | sort)"
-          grep -A3 'def load(self, model_path, adapter_path=None, draft_model_path=None):' mlx_lm/server.py \
-            | grep -q 'adapter_path = self._adapter_map.get(model_path, adapter_path)'
+          test "$actual" = "$(printf '%s\n' "$expected" | sort)"
+
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("mlx_lm/server.py").read_text()
+          correct = '''    def load(self, model_path, adapter_path=None, draft_model_path=None):
+              adapter_path = self._adapter_map.get(model_path, adapter_path)
+              model_path = self._model_map.get(model_path, model_path)
+          '''
+          if text.count(correct) != 1:
+              raise RuntimeError("base adapter-alias resolution order was not preserved")
+          PY
 
           git push --force-with-lease origin HEAD:fix/mtp-native-transactional-hardening
