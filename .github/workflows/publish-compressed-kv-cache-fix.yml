@@ -1,0 +1,68 @@
+name: Publish CompressedKVCache lifecycle fix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [automation/compressed-kv-cache-publisher]
+    paths:
+      - '.publisher/compressed-cache/**'
+      - '.github/workflows/publish-compressed-kv-cache-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Reconstruct the reviewed transformation
+        run: |
+          python - <<'PY'
+          import base64
+          import hashlib
+          from pathlib import Path
+
+          parts = sorted(Path('.publisher/compressed-cache').glob('part-*.b64'))
+          if len(parts) != 9:
+              raise SystemExit(f'expected 9 publisher chunks, found {len(parts)}')
+          script = base64.b64decode(''.join(p.read_text().strip() for p in parts), validate=True)
+          expected = 'a53a55368d2616bfa2870f6babf80216944c0a657f81ab5dbe53fa08efd8e350'
+          actual = hashlib.sha256(script).hexdigest()
+          if actual != expected:
+              raise SystemExit(f'publisher SHA-256 {actual}, expected {expected}')
+          Path('/tmp/publish_cache_fix.py').write_bytes(script)
+          print(f'verified publisher: {len(script)} bytes, {actual}')
+          PY
+
+      - name: Build focused fix on the reviewed DeepSeek V4 base
+        run: |
+          set -euo pipefail
+          git config user.name 'Philip John Basile'
+          git config user.email 'PBasile@Basilecom.com'
+          git switch -C fix/deepseek-v4-compressed-cache-lifecycle 63a26625c7ba2ffb8159ff430e630321446c7df4
+          python /tmp/publish_cache_fix.py
+
+      - name: Install and validate
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest ruff
+          python -m compileall -q mlx_lm/models/cache.py mlx_lm/models/deepseek_v4.py tests/test_deepseek_v4_compressed_cache.py
+          python -m pytest -q tests/test_deepseek_v4_compressed_cache.py tests/test_prompt_cache.py
+          ruff check mlx_lm/models/cache.py mlx_lm/models/deepseek_v4.py tests/test_deepseek_v4_compressed_cache.py
+          ruff format --check mlx_lm/models/cache.py mlx_lm/models/deepseek_v4.py tests/test_deepseek_v4_compressed_cache.py
+          git diff --check
+
+      - name: Commit and publish
+        run: |
+          git add mlx_lm/models/cache.py mlx_lm/models/deepseek_v4.py tests/test_deepseek_v4_compressed_cache.py
+          git commit -s -m 'fix(cache): preserve compressed KV lifecycle state'
+          git push --force-with-lease origin HEAD:fix/deepseek-v4-compressed-cache-lifecycle
+          git show --stat --oneline -1
