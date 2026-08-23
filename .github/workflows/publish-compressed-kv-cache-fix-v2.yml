@@ -50,6 +50,17 @@ jobs:
           git config user.email 'PBasile@Basilecom.com'
           git switch -C fix/deepseek-v4-compressed-cache-lifecycle 63a26625c7ba2ffb8159ff430e630321446c7df4
           python /tmp/publish_cache_fix.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('mlx_lm/models/deepseek_v4.py')
+          text = path.read_text()
+          if 'from typing import Any\n' not in text:
+              anchor = 'from typing import '
+              if anchor not in text:
+                  raise SystemExit('typing import anchor not found')
+              text = text.replace(anchor, 'from typing import Any\n' + anchor, 1)
+              path.write_text(text)
+          PY
           python -m compileall -q mlx_lm/models/cache.py mlx_lm/models/deepseek_v4.py tests/test_deepseek_v4_compressed_cache.py
 
       - name: Install and validate
