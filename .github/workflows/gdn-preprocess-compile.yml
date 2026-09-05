@@ -1,0 +1,36 @@
+name: GDN preprocessing Metal compile
+on:
+  push:
+    branches: [experimental/gdn-preprocessing]
+    paths: [experiments/gdn_preprocessing/**, .github/workflows/gdn-preprocess-compile.yml]
+permissions:
+  contents: read
+jobs:
+  metal:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Generate and compile direct and fused variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          { sw_vers; uname -m; xcodebuild -version; } > evidence/environment.txt
+          if ! xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1
+          fi
+          python3 experiments/gdn_preprocessing/emit_metal.py evidence/gdn_prepare.metal | tee evidence/generation.log
+          xcrun -sdk macosx metal -std=metal3.2 -fno-fast-math -c evidence/gdn_prepare.metal -o evidence/gdn_prepare.air 2>&1 | tee evidence/compile.log
+          xcrun -sdk macosx metallib evidence/gdn_prepare.air -o evidence/gdn_prepare.metallib 2>&1 | tee evidence/link.log
+          shasum -a 256 experiments/gdn_preprocessing/kernels.py evidence/gdn_prepare.metal evidence/gdn_prepare.metallib > evidence/SHA256SUMS
+          printf 'Offline Metal compilation passed. No GPU execution or performance test was run.\n' > evidence/STATUS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gdn-preprocessing-compile
+          path: evidence/
+          retention-days: 7
