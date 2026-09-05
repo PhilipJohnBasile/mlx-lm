@@ -16,7 +16,7 @@ once per loaded tokenizer and is excluded from warm service latency.
 Each row generates 64 tokens per stream through complete requests with ragged
 prompts at concurrency four. Warmup, fifteen alternating ABBA/BAAB rounds,
 before/after A/A, drift, pre/post exact log-probability and cache comparisons,
-and zero-swap checks passed. All 480 timed requests retained the same greedy
+and zero-swap checks passed. All 480 timed batches (1,200 individual streams) retained the same greedy
 tokens. No timing threshold or numerical tolerance was weakened.
 
 | Prompt tokens | Concurrency | Reference / candidate median ms | Throughput ratio (95% interval) | Reference / candidate TTFT ms |
