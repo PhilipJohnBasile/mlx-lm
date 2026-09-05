@@ -75,6 +75,21 @@
       "gzip_file": "shared-bpe-moe4-01__extra_source__experiments__shared_bpe__test_shared_bpe.py.gz",
       "bytes": 4143,
       "sha256": "172da868ccfae946f1edce8aacc19277fe604be33601d1c2329e9eeb4a191460"
+    },
+    "shared-bpe-dense4-01/report.json": {
+      "gzip_file": "shared-bpe-dense4-01__report.json.gz",
+      "bytes": 3306381,
+      "sha256": "fa269394c8704fa4cab7c6662a6967d4ea0d6446330dda382a0bab050fb1dd67"
+    },
+    "shared-bpe-tests-02.log": {
+      "gzip_file": "shared-bpe-tests-02.log.gz",
+      "bytes": 656,
+      "sha256": "8da8272314aead385a8f592f2933fc2b934e2954e53ffe7025fb1b020c30a97a"
+    },
+    "shared-bpe-lint-02.log": {
+      "gzip_file": "shared-bpe-lint-02.log.gz",
+      "bytes": 240,
+      "sha256": "d14fc5313b55e8478db4202dfd68efeffdeb27d4a396f81781c9e483aebdca6b"
     }
   }
 }

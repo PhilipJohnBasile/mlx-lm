@@ -36,11 +36,18 @@ streams in the existing single scheduler batch.
 
 ## Dense coverage in progress
 
-The dense matrix is still running. Its first short/concurrency-one cell passed
-bitwise state/text checks but failed A/A TTFT noise controls, so its observed
-latency improvement is not an accepted result. That receipt will be retained
-separately and repeated without changing the gates. No dense improvement is
-claimed until its required timing controls pass.
+The initial dense matrix completed. All pre/post log-probabilities and cache
+states are bitwise equal, and tokens/text match. The 2048-token/concurrency-one
+cell passed all controls at 1.0230x useful throughput. Both short cells failed
+TTFT A/A calibration and remain invalid. The 2048-token/concurrency-four cell
+passed A/A and drift but observed 12 and 4 swap-in pages in two timed requests;
+it remains invalid. No swap-out or page-out occurred. All raw observations are
+retained, including apparent improvements that cannot be accepted.
+
+The repeats use four warmups per arm, fifteen measured rounds for the short
+cells, and a separate five-round long/concurrency-four run. The request function,
+correctness thresholds, A/A intervals, drift limits and zero-swap gates are
+unchanged. Other agent work on the machine will pause during those timings.
 
 The map only admits the original BPE detokenizer on a frozen tokenizer. It has
 a tested reference path, unsupported/nested-selection rejection and restoration
