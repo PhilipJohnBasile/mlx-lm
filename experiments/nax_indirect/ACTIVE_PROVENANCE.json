@@ -1,0 +1,26 @@
+{
+  "archive_base_commit": "5db58608fa5d21d2613985cefe94a243420ccd63",
+  "archive_path": "workbench/research-kit/indirect-prototype",
+  "semantic_code_changes": [
+    "mlx_nax_indirect/kernels/route_address.h",
+    "mlx_nax_indirect/kernels/indirect_load.h"
+  ],
+  "changes": "Rename Metal-reserved fragment/half parameters and qualify the local fragment reference as thread. No indexing, arithmetic, shape, quantization, selection or tolerance changes.",
+  "pre_format_source_sha256": {
+    "benchmark.py": "69f71253f6d8f9745de334f1b40e1d102ee834461b0c821aabad517410b696e8",
+    "qualification_utils.py": "632565dd8b861ca34d17aed81130fff009d874b9b954ae643159673ed84e49bd",
+    "tools/emit_metal.py": "d15c712eef9df6523222ffb8df9870e4bcbb63f58572c328768b5ae74d8cd4ee",
+    "tools/make_kernel.py": "c7135ddbdd031a4cee035a01f5a515a4cd7311de13df4686631c2655e9f80f7f",
+    "tools/make_vendor.py": "bbb2d1715600961f19803439a96c03dbfbf787aafdbb29a39901ab3c511e590c",
+    "tests/test_qualification_utils.py": "eaa21cd8c9133f3dfacacc9e5b28f6dcf3657780b4a838a04c25fe69f020ade0",
+    "tests/test_policy.py": "13d61dc65856ac9966fed7a3d6995ca5f51a7f5f557c819e471f8c7adb2338d4",
+    "tests/test_native.py": "52d4e40f83ab61dac72092bc82759ce53cb6549975cacd441bf83d164d1632fc",
+    "mlx_nax_indirect/policy.py": "2a9b62d8a52096210b4747f485eaefb080aa67d006247c662e93551e3d7c12c4",
+    "mlx_nax_indirect/__init__.py": "dd8e2d260f4ce1b14a659f35d2b6a84a67e4453aefca74e38658fa6825125d3a",
+    "mlx_nax_indirect/kernels/route_address.h": "6f52774505ce37eb19b49901cd9fcab28f9ff45cfbd8e22d133abe8e886ef6e6",
+    "mlx_nax_indirect/kernels/indirect_load.h": "54fd47f05a37da07529146cba61ff2e182bb0ae7dfa486b9189bd002e473d89f",
+    "mlx_nax_indirect/kernels/upstream_nax.h": "d3e5c3be7f28712799a1175a881402fc3679d8d61d91801d917503b576debf5a",
+    "mlx_nax_indirect/kernels/offline_utils.h": "f5efc51eb6d9ac1d4562998b2e5ca5258f09828afabc7bdb6fb0f064290ef24a",
+    "mlx_nax_indirect/kernels/gather_body.metal": "7b2720aa6755a6c2657c8d7ef896fa8e128739f35309936c4d2ba1abd10e4ee1"
+  }
+}

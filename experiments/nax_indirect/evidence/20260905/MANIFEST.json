@@ -1,0 +1,165 @@
+{
+  "archive_base_commit": "5db58608fa5d21d2613985cefe94a243420ccd63",
+  "performance_qualified": false,
+  "files": {
+    "nax-active-01/qualification-tests.log": {
+      "gzip_file": "nax-active-01__qualification-tests.log.gz",
+      "bytes": 2092,
+      "sha256": "8fc5b70a50309825bff2f8e62fd099d4833f4848602f4baf331521692ed71af4"
+    },
+    "nax-active-01/policy-tests.log": {
+      "gzip_file": "nax-active-01__policy-tests.log.gz",
+      "bytes": 776,
+      "sha256": "5d96c03f5de4e27d12ed14ed4ca51b898a752ac8b19c6cf744c3f49aa9839e50"
+    },
+    "nax-active-01/compile.log": {
+      "gzip_file": "nax-active-01__compile.log.gz",
+      "bytes": 1626,
+      "sha256": "48451584ff3f29f10da264512f2e12d6e14eebcdf7c8448b2b30085617e12079"
+    },
+    "nax-active-01/route-address.log": {
+      "gzip_file": "nax-active-01__route-address.log.gz",
+      "bytes": 64,
+      "sha256": "8fa98afda4c1523bc6b3a30413a29cc348941015fdaa589ffda30bb26bce7eea"
+    },
+    "nax-active-01/emit.log": {
+      "gzip_file": "nax-active-01__emit.log.gz",
+      "bytes": 48,
+      "sha256": "ff905535fd078bb1c507cf86f5f4170648a485c3f106412788d399d3ad6ea8ed"
+    },
+    "nax-active-01/native-tests.log": {
+      "gzip_file": "nax-active-01__native-tests.log.gz",
+      "bytes": 941,
+      "sha256": "a04655aece56be50306286251ff33a2ed33455da00aee9583cad19eefdd64fc9"
+    },
+    "nax-active-01/pair-bf16.log": {
+      "gzip_file": "nax-active-01__pair-bf16.log.gz",
+      "bytes": 325,
+      "sha256": "c8aa05f5a267f7d3ca3e47961f5f9d40cb1fa34844ad4bd920211b4ace9bb13f"
+    },
+    "nax-active-01/link.log": {
+      "gzip_file": "nax-active-01__link.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "nax-active-01/pair-bf16.json": {
+      "gzip_file": "nax-active-01__pair-bf16.json.gz",
+      "bytes": 31106,
+      "sha256": "3fa0d05159a09715a1e8769dccece7b9fd899487cf0b0ded497daea4dc02b25b"
+    },
+    "nax-active-01/source/benchmark.py": {
+      "gzip_file": "nax-active-01__source__benchmark.py.gz",
+      "bytes": 10391,
+      "sha256": "69f71253f6d8f9745de334f1b40e1d102ee834461b0c821aabad517410b696e8"
+    },
+    "nax-active-01/source/qualification_utils.py": {
+      "gzip_file": "nax-active-01__source__qualification_utils.py.gz",
+      "bytes": 6126,
+      "sha256": "632565dd8b861ca34d17aed81130fff009d874b9b954ae643159673ed84e49bd"
+    },
+    "nax-active-01/source/tools/emit_metal.py": {
+      "gzip_file": "nax-active-01__source__tools__emit_metal.py.gz",
+      "bytes": 2077,
+      "sha256": "d15c712eef9df6523222ffb8df9870e4bcbb63f58572c328768b5ae74d8cd4ee"
+    },
+    "nax-active-01/source/tools/make_kernel.py": {
+      "gzip_file": "nax-active-01__source__tools__make_kernel.py.gz",
+      "bytes": 3238,
+      "sha256": "c7135ddbdd031a4cee035a01f5a515a4cd7311de13df4686631c2655e9f80f7f"
+    },
+    "nax-active-01/source/tools/make_vendor.py": {
+      "gzip_file": "nax-active-01__source__tools__make_vendor.py.gz",
+      "bytes": 2117,
+      "sha256": "bbb2d1715600961f19803439a96c03dbfbf787aafdbb29a39901ab3c511e590c"
+    },
+    "nax-active-01/source/tests/test_qualification_utils.py": {
+      "gzip_file": "nax-active-01__source__tests__test_qualification_utils.py.gz",
+      "bytes": 5444,
+      "sha256": "eaa21cd8c9133f3dfacacc9e5b28f6dcf3657780b4a838a04c25fe69f020ade0"
+    },
+    "nax-active-01/source/tests/test_policy.py": {
+      "gzip_file": "nax-active-01__source__tests__test_policy.py.gz",
+      "bytes": 3078,
+      "sha256": "13d61dc65856ac9966fed7a3d6995ca5f51a7f5f557c819e471f8c7adb2338d4"
+    },
+    "nax-active-01/source/tests/test_native.py": {
+      "gzip_file": "nax-active-01__source__tests__test_native.py.gz",
+      "bytes": 6381,
+      "sha256": "52d4e40f83ab61dac72092bc82759ce53cb6549975cacd441bf83d164d1632fc"
+    },
+    "nax-active-01/source/mlx_nax_indirect/policy.py": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect__policy.py.gz",
+      "bytes": 2371,
+      "sha256": "2a9b62d8a52096210b4747f485eaefb080aa67d006247c662e93551e3d7c12c4"
+    },
+    "nax-active-01/source/mlx_nax_indirect/__init__.py": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect____init__.py.gz",
+      "bytes": 8434,
+      "sha256": "dd8e2d260f4ce1b14a659f35d2b6a84a67e4453aefca74e38658fa6825125d3a"
+    },
+    "nax-active-01/source/mlx_nax_indirect/kernels/route_address.h": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect__kernels__route_address.h.gz",
+      "bytes": 1289,
+      "sha256": "6f52774505ce37eb19b49901cd9fcab28f9ff45cfbd8e22d133abe8e886ef6e6"
+    },
+    "nax-active-01/source/mlx_nax_indirect/kernels/indirect_load.h": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect__kernels__indirect_load.h.gz",
+      "bytes": 1840,
+      "sha256": "54fd47f05a37da07529146cba61ff2e182bb0ae7dfa486b9189bd002e473d89f"
+    },
+    "nax-active-01/source/mlx_nax_indirect/kernels/upstream_nax.h": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect__kernels__upstream_nax.h.gz",
+      "bytes": 55815,
+      "sha256": "d3e5c3be7f28712799a1175a881402fc3679d8d61d91801d917503b576debf5a"
+    },
+    "nax-active-01/source/mlx_nax_indirect/kernels/offline_utils.h": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect__kernels__offline_utils.h.gz",
+      "bytes": 52072,
+      "sha256": "f5efc51eb6d9ac1d4562998b2e5ca5258f09828afabc7bdb6fb0f064290ef24a"
+    },
+    "nax-active-01/source/mlx_nax_indirect/kernels/gather_body.metal": {
+      "gzip_file": "nax-active-01__source__mlx_nax_indirect__kernels__gather_body.metal.gz",
+      "bytes": 6928,
+      "sha256": "7b2720aa6755a6c2657c8d7ef896fa8e128739f35309936c4d2ba1abd10e4ee1"
+    },
+    "nax-independent-01/compile.log": {
+      "gzip_file": "nax-independent-01__compile.log.gz",
+      "bytes": 18676,
+      "sha256": "0f28276149c3b0d5bf42828a60b8136ee716fb41f298fb745d55a89fa2b033fa"
+    },
+    "nax-active-01/qualification-formatted-tests.log": {
+      "gzip_file": "nax-active-01__qualification-formatted-tests.log.gz",
+      "bytes": 2092,
+      "sha256": "829e47b0434c2ec704fdd56476744280a12c52aa738df9b4b1a6ad304922f159"
+    },
+    "nax-active-01/native-formatted-tests.log": {
+      "gzip_file": "nax-active-01__native-formatted-tests.log.gz",
+      "bytes": 941,
+      "sha256": "cc8a421a360c6d8f75abc99c98b8add4c35c8ae07d632ab238eb38c39ae436bb"
+    },
+    "nax-active-01/policy-formatted-tests-corrected.log": {
+      "gzip_file": "nax-active-01__policy-formatted-tests-corrected.log.gz",
+      "bytes": 776,
+      "sha256": "5d96c03f5de4e27d12ed14ed4ca51b898a752ac8b19c6cf744c3f49aa9839e50"
+    },
+    "nax-active-01/policy-formatted-tests.log": {
+      "gzip_file": "nax-active-01__policy-formatted-tests.log.gz",
+      "bytes": 247,
+      "sha256": "d191a64ed0df5c0c4a168b929e6784e1aba44977fc9107795679decda1ad53c3"
+    }
+  },
+  "compiled_artifacts": {
+    "pilot.metal": {
+      "bytes": 142283,
+      "sha256": "0ff38383b6d90661ff4e25c9d5730f1841069ce7af166b440fc2f45ba5d25ad0"
+    },
+    "pilot.air": {
+      "bytes": 682832,
+      "sha256": "bf37405df4032383768e9e3695292ae6359e3b5b933b59d44584e8a38f7f78d0"
+    },
+    "pilot.metallib": {
+      "bytes": 2010704,
+      "sha256": "1aa740026d6fa5de8abd406659428f8907829f6edf987045d53db8bc0a79b7ea"
+    }
+  }
+}
