@@ -1,0 +1,49 @@
+name: Recover earlier M5 handoff fragments
+on:
+  push:
+    branches: [handoff/m5-workbench-import-20260905]
+    paths: [.github/workflows/m5-workbench-recover-earlier.yml]
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read earlier staged objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+          shas = '''31368e863767a68a2d22b89e589177b3c6fa0a2e
+          82360ecc40cd2dafa53d27afece1a5ec9a62fe60
+          35c627f20bbbef88b9593aebae3c35919c4d2b17
+          53d56a02c8b52b419948d8e19a3855e137e807d2
+          ed5acea02e7d7e8ec1107cf259b5365930c83f76
+          a4ae4bce1a6b86b91b6f0e826a98f6e561749083
+          c9bd68e58217bcd9621cd25a1ed138296abd52ef
+          6e674442d4bbacce6e60f109178af16df4c0f2c8'''.split()
+          root = pathlib.Path('recovery'); root.mkdir()
+          records = []
+          for i, sha in enumerate(shas):
+              req = urllib.request.Request(
+                  'https://api.github.com/repos/PhilipJohnBasile/mlx-lm/git/blobs/' + sha,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  info = json.load(response)
+              data = base64.b64decode(info['content'])
+              actual = hashlib.sha1(('blob %d\0' % len(data)).encode() + data).hexdigest()
+              if actual != sha: raise RuntimeError('Git object hash mismatch')
+              (root / ('part-%02d.bin' % i)).write_bytes(data)
+              records.append({'part': i, 'bytes': len(data), 'git_blob': sha,
+                              'sha256': hashlib.sha256(data).hexdigest()})
+          (root / 'parts.json').write_text(json.dumps(records, indent=2) + '\n')
+          print(json.dumps(records, indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: recovered-earlier-m5-fragments
+          path: recovery/
+          retention-days: 7
