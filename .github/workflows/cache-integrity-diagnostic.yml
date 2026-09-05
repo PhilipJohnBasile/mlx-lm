@@ -1,0 +1,101 @@
+name: Cache integrity diagnostic
+on:
+  push:
+    branches: [diagnostics/cache-integrity-20260904]
+    paths: [.github/workflows/cache-integrity-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e . pytest
+      - name: Exercise cache geometry and prefix reuse
+        run: |
+          cat > /tmp/cache_integrity.py <<'PY'
+          import copy
+          import random
+          import mlx.core as mx
+          from mlx_lm.generate import BatchGenerator
+          from mlx_lm.models.cache import KVCache, RotatingKVCache, LRUPromptCache
+
+          class Model:
+              def __init__(self, sliding):
+                  self.sliding = sliding
+                  self.layers = [None] * 4
+              def make_cache(self):
+                  return [RotatingKVCache(8) if self.sliding and i % 2 else KVCache() for i in range(4)]
+              def __call__(self, inputs, cache):
+                  k = inputs[:, None, :, None].astype(mx.float32)
+                  logits = None
+                  for c in cache:
+                      mask = c.make_mask(inputs.shape[1])
+                      keys, values = c.update_and_fetch(k, k)
+                      if isinstance(mask, mx.array):
+                          assert mask.shape[-1] == keys.shape[2], (type(c).__name__, mask.shape, keys.shape, c.__dict__)
+                      s = keys.sum(axis=(1, 2, 3))
+                      logits = s if logits is None else logits + s
+                  return mx.broadcast_to(logits[:, None, None], (inputs.shape[0], inputs.shape[1], 32))
+
+          def verify(cache, tokens, label):
+              for c in cache:
+                  assert c.offset == len(tokens), (label, type(c).__name__, c.offset, len(tokens))
+                  if isinstance(c, KVCache):
+                      got = c.keys[0, 0, :c.offset, 0].tolist()
+                      assert got == tokens, (label, type(c).__name__, len(got), len(tokens), got[:20], tokens[:20])
+                  else:
+                      ordered = c._temporal_order(c.keys)[0, 0, :, 0].tolist()
+                      expected = tokens[-len(ordered):]
+                      assert ordered == expected, (label, type(c).__name__, ordered, expected)
+
+          def serve(model, model_key, prompts, lru, segmented=False):
+              with_cache, rest, history = [], [], []
+              for p in prompts:
+                  c, r = lru.fetch_nearest_cache(model_key, p)
+                  if c is not None:
+                      verify(c, p[:len(p)-len(r)], 'fetch')
+                  with_cache.append(c)
+                  rest.append(r)
+                  history.append(p[:len(p)-len(r)])
+              gen = BatchGenerator(model, max_tokens=16, prefill_batch_size=2, completion_batch_size=4, prefill_step_size=7)
+              try:
+                  segments = [[r[:5], r[5:]] if segmented and len(r)>6 else [r] for r in rest]
+                  gen.insert_segments(segments, caches=with_cache, all_tokens=history)
+                  steps = 0
+                  while True:
+                      pr, gr = gen.next()
+                      if not pr and not gr:
+                          break
+                      for r in pr:
+                          if r.end_of_segment and not r.end_of_prompt:
+                              entry = gen.extract_cache([r.uid]).get(r.uid)
+                              if entry is not None:
+                                  c, t = entry
+                                  verify(c, t, 'segment')
+                                  lru.insert_cache(model_key, t[:], c, cache_type='user')
+                      for r in gr:
+                          if r.finish_reason:
+                              verify(r.prompt_cache, r.all_tokens, 'completion')
+                              lru.insert_cache(model_key, r.all_tokens[:], r.prompt_cache)
+                      steps += 1
+                      assert steps < 5000
+              finally:
+                  gen.close()
+
+          print('ENV', mx.__version__, mx.device_info(), flush=True)
+          for segmented in (False, True):
+              lru = LRUPromptCache(max_size=8)
+              a, b = Model(False), Model(True)
+              for n in range(40):
+                  prompts = [[(i*3+n)%29+1 for i in range(length)] for length in (131, 37, 9, 3)]
+                  serve(a, 'a', prompts, lru, segmented)
+                  serve(b, 'b', [[2,3,4,5,6,7,8,9,10,11,12,13,14]], lru, segmented)
+                  serve(a, 'a', prompts, lru, segmented)
+              print('PASS', 'segmented', segmented, '40 alternating rounds', flush=True)
+          PY
+          python /tmp/cache_integrity.py
