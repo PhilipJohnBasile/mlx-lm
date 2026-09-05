@@ -90,13 +90,22 @@ def texts(tokenizer, target, concurrency):
     return result
 
 
-def request(model, tokenizer, prompts, mode, count, prefill_step, capture=False):
+def request(
+    model,
+    tokenizer,
+    prompts,
+    mode,
+    count,
+    prefill_step,
+    capture=False,
+    selector=select_gdn,
+):
     before = memory()
     if before["free_percent"] < 15:
         raise RuntimeError("Insufficient memory-pressure headroom for timing")
     mx.synchronize()
     start = time.perf_counter_ns()
-    with select_gdn(model, mode):
+    with selector(model, mode):
         ids = [tokenizer.encode(p) for p in prompts]
         detokenizers = [tokenizer.detokenizer for _ in prompts]
         gen = BatchGenerator(
@@ -213,11 +222,17 @@ def parity(a, b):
     }
 
 
-def main():
+def main(
+    *,
+    modes=("direct", "fused"),
+    make_selector=None,
+    extra_sources=(),
+    require_bitwise=False,
+):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--mode", choices=("direct", "fused"), default="fused")
+    p.add_argument("--mode", choices=modes, default=modes[-1])
     p.add_argument("--tokens", default="32,2048")
     p.add_argument("--concurrency", default="1,4")
     p.add_argument("--max-tokens", type=int, default=64)
@@ -235,6 +250,7 @@ def main():
         "performance_qualified": False,
         "cells": [],
         "tolerances": TOLERANCES,
+        "require_bitwise": require_bitwise,
         "scope": "Warm full requests: tokenization, continuous batching, prefill, greedy sampling, decode, detokenization, cache and synchronization. Model load excluded.",
         "args": {
             k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()
@@ -274,7 +290,12 @@ def main():
             + list((root / "experiments/m5_inference").glob("*.py"))
             + list((root / "experiments/gdn_preprocessing/mlx_gdn_prep").glob("*.py"))
         )
+        sources += list(extra_sources)
         status["source_sha256"] = {str(f.relative_to(root)): sha256(f) for f in sources}
+        for source in extra_sources:
+            destination = args.output / "extra_source" / source.relative_to(root)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
         for source in (root / "experiments/m5_inference").glob("*.py"):
             destination = args.output / "source" / source.name
             destination.parent.mkdir(exist_ok=True)
@@ -289,6 +310,9 @@ def main():
         mx.set_memory_limit(90_000_000_000)
         mx.set_cache_limit(2_000_000_000)
         model, tokenizer = load(str(args.model))
+        selector = select_gdn
+        if make_selector is not None:
+            selector, status["preparation"] = make_selector(model, tokenizer)
         for target in map(int, args.tokens.split(",")):
             for concurrency in map(int, args.concurrency.split(",")):
                 prompts = texts(tokenizer, target, concurrency)
@@ -311,6 +335,7 @@ def main():
                         args.max_tokens,
                         args.prefill_step_size,
                         capture,
+                        selector=selector,
                     )
                     return result, tensors
 
@@ -325,6 +350,8 @@ def main():
                     state["tokens_equal"] = a["tokens"] == b["tokens"]
                     state["texts_equal"] = a["texts"] == b["texts"]
                     state["passed"] &= state["tokens_equal"] and state["texts_equal"]
+                    if require_bitwise:
+                        state["passed"] &= state["bitwise_equal"]
                     cell["correctness"].append(state)
                     if not state["passed"]:
                         write()
