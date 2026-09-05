@@ -238,7 +238,10 @@ def main(
     p.add_argument("--max-tokens", type=int, default=64)
     p.add_argument("--prefill-step-size", type=int, default=512)
     p.add_argument("--rounds", type=int, default=5)
+    p.add_argument("--warmup-rounds", type=int, default=1)
     args = p.parse_args()
+    if args.warmup_rounds < 1:
+        p.error("At least one warmup round is required")
     if args.rounds < 5 or args.max_tokens < 2:
         p.error("At least five rounds and two generated tokens are required")
     if args.output.exists():
@@ -340,8 +343,9 @@ def main(
                     return result, tensors
 
                 # Warm up both paths, then inspect complete generated logits and final caches.
-                for mode in ("reference", args.mode):
-                    run(mode)
+                for _ in range(args.warmup_rounds):
+                    for mode in ("reference", args.mode):
+                        run(mode)
 
                 def gate():
                     a, at = run("reference", True)

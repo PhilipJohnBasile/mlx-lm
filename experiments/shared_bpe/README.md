@@ -51,3 +51,8 @@ bitwise parity, and snapshots its additional sources. Warmup, alternating A/B,
 before/after A/A, drift and zero-swap gates are unchanged. All raw samples and
 source/binary/checkpoint hashes are recorded. Results remain experimental until
 that matrix finishes. No speedup is inferred from the profile alone.
+
+For repeat qualification, `--warmup-rounds 4` warms each arm four times.
+The default remains one round; all correctness, A/A, drift and swap gates remain
+unchanged. Short-prompt repeats use fifteen measured rounds to resolve noisy
+TTFT calibration, with all earlier invalid receipts preserved.
