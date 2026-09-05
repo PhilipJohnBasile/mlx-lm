@@ -24,19 +24,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p evidence
+          mkdir -p evidence experiments/gdn_preprocessing/reference/vendor
+          cp mlx-headers/mlx/backend/metal/kernels/bf16{,_math}.h experiments/gdn_preprocessing/reference/vendor/
           { sw_vers; uname -m; xcodebuild -version; } > evidence/environment.txt
           if ! xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1; then
             xcodebuild -downloadComponent MetalToolchain
             xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1
           fi
-          echo 'abd87446a310b77ac530ef52a324feae5cb285d03ec9613e3a88ebb71410fdcb  mlx-headers/mlx/backend/metal/kernels/bf16.h' | shasum -a 256 -c -
-          echo '1f374f8380f756eb89acf6a847741cb8fecbe642945e159fb6208d804cc06496  mlx-headers/mlx/backend/metal/kernels/bf16_math.h' | shasum -a 256 -c -
-          python3 experiments/gdn_preprocessing/emit_metal.py evidence/gdn_prepare.metal mlx-headers/mlx/backend/metal/kernels | tee evidence/generation.log
+          python3 experiments/gdn_preprocessing/tools/emit_metal.py evidence/gdn_prepare.metal | tee evidence/generation.log
           xcrun -sdk macosx metal -std=metal3.2 -fno-fast-math -c evidence/gdn_prepare.metal -o evidence/gdn_prepare.air 2>&1 | tee evidence/compile.log
           xcrun -sdk macosx metallib evidence/gdn_prepare.air -o evidence/gdn_prepare.metallib 2>&1 | tee evidence/link.log
-          shasum -a 256 experiments/gdn_preprocessing/kernels.py evidence/gdn_prepare.metal evidence/gdn_prepare.metallib > evidence/SHA256SUMS
+          shasum -a 256 experiments/gdn_preprocessing/mlx_gdn_prep/kernels.py evidence/gdn_prepare.metal evidence/gdn_prepare.metallib > evidence/SHA256SUMS
           printf 'Offline Metal compilation passed. No GPU execution or performance test was run.\n' > evidence/STATUS.txt
+      - name: Record available Metal devices
+        shell: bash
+        run: |
+          swift -e 'import Metal; let devices = MTLCopyAllDevices(); print("Metal device count: \(devices.count)"); for d in devices { print(d.name) }' > evidence/gpu-inventory.txt 2>&1
+      - name: Run host semantic and source integrity checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/gdn-host-tests
+          /tmp/gdn-host-tests/bin/python -m pip install numpy
+          cd experiments/gdn_preprocessing
+          /tmp/gdn-host-tests/bin/python -m unittest discover -s tests -p test_host.py -v 2>&1 | tee ../../evidence/host.log
+          /tmp/gdn-host-tests/bin/python -m unittest discover -s tests -p test_timing.py -v 2>&1 | tee ../../evidence/timing.log
+          /tmp/gdn-host-tests/bin/python -m unittest discover -s tests -p test_headers.py -v 2>&1 | tee ../../evidence/headers.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
