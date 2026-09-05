@@ -1,0 +1,17 @@
+ experiments/gdn_preprocessing/LICENSE.upstream     |  21 ++++
+ .../gdn_preprocessing/mlx_gdn_prep/__init__.py     | 132 ++++++++++++++++++++
+ .../gdn_preprocessing/mlx_gdn_prep/geometry.py     |  57 +++++++++
+ .../gdn_preprocessing/mlx_gdn_prep/integration.py  |  38 ++++++
+ .../gdn_preprocessing/mlx_gdn_prep/kernels.py      | 130 ++++++++++++++++++++
+ .../gdn_preprocessing/mlx_gdn_prep/oracle.py       |  72 +++++++++++
+ .../gdn_preprocessing/mlx_gdn_prep/timing.py       |  29 +++++
+ experiments/gdn_preprocessing/pyproject.toml       |  10 ++
+ .../gdn_preprocessing/tests/test_headers.py        |  35 ++++++
+ experiments/gdn_preprocessing/tests/test_host.py   | 119 ++++++++++++++++++
+ experiments/gdn_preprocessing/tests/test_native.py | 134 +++++++++++++++++++++
+ experiments/gdn_preprocessing/tests/test_timing.py |  20 +++
+ experiments/gdn_preprocessing/tools/benchmark.py   | 100 +++++++++++++++
+ experiments/gdn_preprocessing/tools/emit_metal.py  |  71 +++++++++++
+ experiments/gdn_preprocessing/tools/qualify_m5.py  |  49 ++++++++
+ .../gdn_preprocessing/tools/test_kernel_host.py    | 134 +++++++++++++++++++++
+ 16 files changed, 1151 insertions(+)

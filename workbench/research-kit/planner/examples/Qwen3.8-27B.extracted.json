@@ -1,0 +1,24 @@
+{
+  "_provenance": {
+    "source": "https://huggingface.co/Qwen/Qwen3.8-27B/raw/main/config.json",
+    "status": "Manually extracted relevant fields, not a byte-for-byte original config",
+    "research_date": "2026-09-04"
+  },
+  "text_config": {
+    "model_type": "qwen3_5_text",
+    "hidden_size": 5120,
+    "intermediate_size": 17408,
+    "num_hidden_layers": 64,
+    "full_attention_interval": 4,
+    "linear_num_key_heads": 16,
+    "linear_num_value_heads": 48,
+    "linear_key_head_dim": 128,
+    "linear_value_head_dim": 128,
+    "linear_conv_kernel_dim": 4,
+    "num_attention_heads": 24,
+    "num_key_value_heads": 4,
+    "head_dim": 256,
+    "vocab_size": 248320,
+    "mamba_ssm_dtype": "float32"
+  }
+}

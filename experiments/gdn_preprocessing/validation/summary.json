@@ -1,0 +1,48 @@
+{
+  "repository": "PhilipJohnBasile/mlx-lm",
+  "branch": "experimental/gdn-preprocessing",
+  "published_commit": "4b1f5191d81427efe8410ea6673b4d67cdc60e0b",
+  "implementation_status": "opt_in_component_implemented",
+  "default_inference_changed": false,
+  "upstream_pr_created": false,
+  "host_tests": {
+    "count": 18,
+    "linux": "passed",
+    "macos_arm64": "passed"
+  },
+  "host_kernel_body_sanitizers": {
+    "cases": 110,
+    "checked_output_elements": 1990656,
+    "dtype": "float32",
+    "asan": "passed",
+    "ubsan": "passed",
+    "gpu_execution": false
+  },
+  "offline_metal": {
+    "instantiations": 576,
+    "compile": "passed",
+    "link": "passed",
+    "compiler": "Xcode 16.4 Apple Metal 32023.620",
+    "os": "macOS 15.7.9 arm64",
+    "warnings": "constexpr-if extension warnings",
+    "run_id": 33944434070
+  },
+  "native_components": {
+    "test_methods": 6,
+    "status": "passed",
+    "device": "Apple Paravirtual device",
+    "architecture": "air64_v27",
+    "mlx_version": "0.32.2",
+    "run_id": 33944537249,
+    "history_comparison": "exact payload bits",
+    "qkv_and_recurrent_state_comparison": "predeclared approximate tolerances"
+  },
+  "physical_m5": "not_run",
+  "pretrained_full_model_correctness": "not_run",
+  "performance": "not_measured",
+  "paired_projection_feature": "not_implemented_this_stage",
+  "quantization_formats": "unchanged; no new quantized kernel support claimed",
+  "source_integrity": "all 14 published Python files plus pyproject/license verified by Git blob hash; standalone Metal source matches compiled artifact byte-for-byte",
+  "precommit_formatters": "not_run",
+  "source_diff_check": "passed"
+}

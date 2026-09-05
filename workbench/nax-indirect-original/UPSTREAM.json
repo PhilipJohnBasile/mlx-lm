@@ -1,0 +1,50 @@
+{
+  "repository": "ml-explore/mlx",
+  "commit": "b6368984b8e02a3fb3ee7986846c0fb85e1fccf7",
+  "files": {
+    "mlx/backend/metal/kernels/steel/gemm/nax.h": {
+      "git_blob_sha1": "6d978ebfb63f2dd8a6d9225cdff33f89a7e72a69",
+      "sha256": "fb10bcae44095e9fed5c81213d03527dd5fe5ac11be11ec7784bd357c6f317ec"
+    },
+    "mlx/backend/metal/kernels/steel/defines.h": {
+      "git_blob_sha1": "f5657ee363138a4e144f1331664a254aa8c74d0d",
+      "sha256": "b03cea6a7d5cfe814e6838d8536e2aacdcafd2744cb408e954fda336ce21759a"
+    },
+    "mlx/backend/metal/kernels/steel/utils/integral_constant.h": {
+      "git_blob_sha1": "2f153f482ffc2b86bafa84ddc0b687694e472379",
+      "sha256": "886eccaac4f8f00eab5a10551fdb5315df7ab7462aba13d69bb95765c1a4735e"
+    },
+    "mlx/backend/metal/kernels/steel/utils/type_traits.h": {
+      "git_blob_sha1": "f004dc836a687bcd95a813bbc105768c71957f56",
+      "sha256": "4766c5a3809d3cf7740e63acc5703ef76b6b4e85d8baf16602c9d517a2fd426c"
+    },
+    "mlx/backend/metal/kernels/quantized_nax.h": {
+      "git_blob_sha1": "bef2634736838a3f38602a2e0fed7d6b951e16bb",
+      "sha256": "d3e174be18edde8c89e630204638dc240479151a92dd0a20c655fe5be9696169"
+    },
+    "mlx/backend/metal/kernels/utils.h": {
+      "git_blob_sha1": "ded7cae643a446e674cfc71e7af7fdfbde4f3665",
+      "sha256": "3be2d84c6683a55fc7876f1da06ceffd58fd883a7a4dc244c25666131c6bb47b"
+    },
+    "mlx/backend/metal/kernels/bf16.h": {
+      "git_blob_sha1": "aa3c3c7803a9adc70f3f13a649d57a3cc0cd0438",
+      "sha256": "abd87446a310b77ac530ef52a324feae5cb285d03ec9613e3a88ebb71410fdcb"
+    },
+    "mlx/backend/metal/kernels/bf16_math.h": {
+      "git_blob_sha1": "0643fb3eadd71cd9fbb1e83f68ca277acf36508c",
+      "sha256": "1f374f8380f756eb89acf6a847741cb8fecbe642945e159fb6208d804cc06496"
+    },
+    "mlx/backend/metal/kernels/complex.h": {
+      "git_blob_sha1": "fe78e0050fa9132fe215a6c98d28beff3d3d1675",
+      "sha256": "16e8a815b2cbdb6070e0824e64fe33fccb6e918f1b84ea5c792bd89d33e57bf1"
+    },
+    "mlx/backend/metal/kernels/defines.h": {
+      "git_blob_sha1": "c369adb7e8550865556b857aa37aa585dd1f0eeb",
+      "sha256": "a2930dbd644c69c4b66a511a094034217f3c03f48e29a1613f601532150f9163"
+    },
+    "mlx/backend/metal/kernels/logging.h": {
+      "git_blob_sha1": "d7446c72225e290dcd8b199e0ae2d3c71f7fcba9",
+      "sha256": "197d9d81944146bea274ebcbc17b2b97b39c7478c0316a3166a08b3fb2467e4b"
+    }
+  }
+}

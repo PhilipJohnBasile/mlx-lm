@@ -1,0 +1,58 @@
+name: GDN preprocessing Metal compile
+on:
+  push:
+    branches: [experimental/gdn-preprocessing]
+    paths: [experiments/gdn_preprocessing/**, .github/workflows/gdn-preprocess-compile.yml]
+permissions:
+  contents: read
+jobs:
+  metal:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ml-explore/mlx
+          ref: b6368984b8e02a3fb3ee7986846c0fb85e1fccf7
+          path: mlx-headers
+          sparse-checkout: mlx/backend/metal/kernels
+          persist-credentials: false
+      - name: Generate and compile direct and fused variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence experiments/gdn_preprocessing/reference/vendor
+          cp mlx-headers/mlx/backend/metal/kernels/bf16{,_math}.h experiments/gdn_preprocessing/reference/vendor/
+          { sw_vers; uname -m; xcodebuild -version; } > evidence/environment.txt
+          if ! xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1
+          fi
+          python3 experiments/gdn_preprocessing/tools/emit_metal.py evidence/gdn_prepare.metal | tee evidence/generation.log
+          xcrun -sdk macosx metal -std=metal3.2 -fno-fast-math -c evidence/gdn_prepare.metal -o evidence/gdn_prepare.air 2>&1 | tee evidence/compile.log
+          xcrun -sdk macosx metallib evidence/gdn_prepare.air -o evidence/gdn_prepare.metallib 2>&1 | tee evidence/link.log
+          shasum -a 256 experiments/gdn_preprocessing/mlx_gdn_prep/kernels.py evidence/gdn_prepare.metal evidence/gdn_prepare.metallib > evidence/SHA256SUMS
+          printf 'Offline Metal compilation passed. No GPU execution or performance test was run.\n' > evidence/STATUS.txt
+      - name: Record available Metal devices
+        shell: bash
+        run: |
+          swift -e 'import Metal; let devices = MTLCopyAllDevices(); print("Metal device count: \(devices.count)"); for d in devices { print(d.name) }' > evidence/gpu-inventory.txt 2>&1
+      - name: Run host semantic and source integrity checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/gdn-host-tests
+          /tmp/gdn-host-tests/bin/python -m pip install numpy
+          cd experiments/gdn_preprocessing
+          /tmp/gdn-host-tests/bin/python -m unittest discover -s tests -p test_host.py -v 2>&1 | tee ../../evidence/host.log
+          /tmp/gdn-host-tests/bin/python -m unittest discover -s tests -p test_timing.py -v 2>&1 | tee ../../evidence/timing.log
+          /tmp/gdn-host-tests/bin/python -m unittest discover -s tests -p test_headers.py -v 2>&1 | tee ../../evidence/headers.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gdn-preprocessing-compile
+          path: evidence/
+          retention-days: 7

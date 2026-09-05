@@ -1,0 +1,16 @@
+{
+  "status": "experimental; host validated; native Metal untested; speed unmeasured",
+  "mlx_core_ref": "b6368984b8e02a3fb3ee7986846c0fb85e1fccf7",
+  "mlx_lm_ref": "32bb4e68791c941db382d6fc8fa5b35ba9f3d98b",
+  "baseline_git_blob": "1fe5d917e6b194b1681bbb1c69589ad3dc759d65",
+  "python": "3.13.5",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+  "host_python_tests": 15,
+  "kernel_host_cases": 1773,
+  "kernel_host_output_elements": 13065859,
+  "exhaustive_small_permutations": 46233,
+  "native_tests": "NOT RUN: missing native MLX and Metal GPU; runner exits 2",
+  "native_benchmark": "NOT RUN",
+  "published": false,
+  "patch_sha256": "73a921c3ec457218971e967aeee5248cc7d0650015dd5b9ed1b0fa94d5e6d928"
+}

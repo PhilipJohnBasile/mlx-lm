@@ -1,0 +1,21 @@
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... ok
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... ok
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... ok
+test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) ... ok
+test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) ... ok
+test_missing_command (test_launch_exit_status.TestLaunchExitStatus.test_missing_command) ... ok
+test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) ... ok
+test_mpi_interrupt (test_launch_exit_status.TestLaunchExitStatus.test_mpi_interrupt) ... ok
+test_output_is_forwarded_on_failure (test_launch_exit_status.TestLaunchExitStatus.test_output_is_forwarded_on_failure) ... ok
+test_print_python (test_launch_exit_status.TestLaunchExitStatus.test_print_python) ... ok
+test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) ... ok
+test_signal_exit (test_launch_exit_status.TestLaunchExitStatus.test_signal_exit) ... ok
+test_success (test_launch_exit_status.TestLaunchExitStatus.test_success) ... ok
+test_successful_rank_does_not_stop_other_ranks (test_launch_exit_status.TestLaunchExitStatus.test_successful_rank_does_not_stop_other_ranks) ... ok
+test_unknown_backend (test_launch_exit_status.TestLaunchExitStatus.test_unknown_backend) ... ok
+test_worker_startup_failure (test_launch_exit_status.TestLaunchExitStatus.test_worker_startup_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 16.671s
+
+OK

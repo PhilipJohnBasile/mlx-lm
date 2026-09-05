@@ -1,0 +1,445 @@
+--- a/benchmark.py
++++ b/benchmark.py
+@@ -19,6 +19,10 @@
+ import mlx.core as mx
+ 
+ from mlx_nax_indirect import project_pair, require_m5_nax, validate_routing
++from qualification_utils import (
++    sample_routes, route_statistics, check_outputs,
++    calibration_passes, valid_timing_summary,
++)
+ 
+ 
+ def measure(fn, iterations):
+@@ -80,11 +84,11 @@
+ def make_workload(tokens, k, n, experts, top_k, bits, group, dtype, distribution, scope):
+     mx.random.seed(4707 + tokens)
+     x = (mx.random.normal((tokens, k)) / math.sqrt(k)).astype(dtype)
+-    if distribution == "skewed":
+-        ids = mx.random.randint(0, min(2, experts), (tokens, top_k))
+-    else:
+-        ids = mx.random.randint(0, experts, (tokens, top_k))
+-    ids = ids.astype(mx.uint32)
++    # Workload generation is outside timed execution. Top-k IDs are unique
++    # within a token, as they are for an ordinary router's top-k selection.
++    host_ids = sample_routes(tokens, experts, top_k, distribution, seed=4707 + tokens)
++    route_info = route_statistics(host_ids, experts)
++    ids = mx.array(host_ids, dtype=mx.uint32)
+     if scope == "switch":
+         import mlx.nn as nn
+         from mlx_lm.models.switch_layers import SwitchGLU
+@@ -96,7 +100,7 @@
+         mx.eval(module.parameters(), x, ids)
+         funcs = {mode: (lambda mode=mode: switch_glu(module, x, ids, mode=mode, validate=False))
+                  for mode in ("upstream", "jit_contiguous", "jit_indirect")}
+-        return funcs, (x, ids, module)
++        return funcs, (x, ids, module), route_info
+     first = mx.quantize(mx.random.normal((experts, n, k)).astype(dtype), group_size=group, bits=bits)
+     second = mx.quantize(mx.random.normal((experts, n, k)).astype(dtype), group_size=group, bits=bits)
+     flat = ids.flatten()
+@@ -108,30 +112,15 @@
+     funcs = {mode: (lambda mode=mode: project_pair(x, first, second, rows, sorted_ids,
+               mode=mode, group_size=group, bits=bits, validate=False))
+              for mode in ("upstream", "jit_contiguous", "jit_indirect")}
+-    return funcs, (x, ids, first, second, rows, sorted_ids)
++    return funcs, (x, ids, first, second, rows, sorted_ids), route_info
+ 
+ 
+ def compare_outputs(funcs, dtype):
+     outputs = {key: fn() for key, fn in funcs.items()}
+     for value in outputs.values():
+         mx.eval(value)
+-    def as_list(value):
+-        return value if isinstance(value, tuple) else (value,)
+-    baseline = as_list(outputs["upstream"])
+-    contig = as_list(outputs["jit_contiguous"])
+-    indirect = as_list(outputs["jit_indirect"])
+     tolerance = 3e-3 if dtype == mx.float16 else 2e-2
+-    checks = []
+-    for a, b, c in zip(baseline, contig, indirect):
+-        finite = mx.all(mx.isfinite(c)).item()
+-        exact = mx.array_equal(b, c).item()
+-        close = mx.allclose(a, c, atol=tolerance, rtol=tolerance).item()
+-        checks.append({"finite": finite, "matched_jit_bitwise": exact,
+-                       "upstream_allclose": close,
+-                       "max_abs_upstream_error": mx.max(mx.abs(a.astype(mx.float32)-c.astype(mx.float32))).item()})
+-    if not all(c["finite"] and c["matched_jit_bitwise"] and c["upstream_allclose"] for c in checks):
+-        raise RuntimeError(f"Correctness gate failed; no performance result accepted: {checks}")
+-    return checks
++    return check_outputs(outputs, mx, tolerance)
+ 
+ 
+ def main():
+@@ -153,6 +142,8 @@
+     args = p.parse_args()
+     if min(args.k, args.n, args.experts, args.top_k, args.rounds, args.iterations) <= 0 or args.rounds < 3:
+         p.error("Positive dimensions and at least three rounds are required")
++    if args.top_k > args.experts:
++        p.error("--top-k cannot exceed --experts")
+     token_counts = [int(t) for t in args.tokens.split(",")]
+     if any(t <= 0 for t in token_counts):
+         p.error("Token counts must be positive")
+@@ -169,10 +160,13 @@
+                   if f.is_file() and f.suffix in (".py", ".h", ".metal")},
+               "parameters": {**vars(args), "output": str(args.output)},
+               "method": "synchronized wall-clock, alternating ABBA/BAAB; bootstrap is per-round only",
++              "qualification_schema": 2,
++              "native_performance_claim": "Per-cell candidate only; no whole-model promotion",
++              "sampling": "Unique top-k per token, synthetic uniform/weighted without replacement",
+               "results": []}
+     args.output.parent.mkdir(parents=True, exist_ok=True)
+     for tokens in token_counts:
+-        funcs, keepalive = make_workload(tokens, args.k, args.n, args.experts, args.top_k,
++        funcs, keepalive, route_info = make_workload(tokens, args.k, args.n, args.experts, args.top_k,
+                                         args.bits, args.group_size, dtype, args.distribution, args.scope)
+         correctness = compare_outputs(funcs, dtype)
+         for fn in funcs.values():
+@@ -183,18 +177,23 @@
+         direct = paired(funcs["upstream"], funcs["jit_indirect"], args.rounds, args.iterations)
+         isolated = paired(funcs["jit_contiguous"], funcs["jit_indirect"], args.rounds, args.iterations)
+         aa_after = paired(funcs["upstream"], funcs["upstream"], args.rounds, args.iterations)
+-        aa_ok = all(abs(x["geomean_speedup"]-1) <= .05 for x in (aa_before, aa_after))
++        aa_ok = all(calibration_passes(x) for x in (aa_before, aa_after))
+         # Catch gross drift across the entire run, not just adjacent A/A pairs.
+         initial_ms = statistics.median(r["a_ms"] for r in aa_before["pairs"])
+         final_ms = statistics.median(r["a_ms"] for r in aa_after["pairs"])
+         drift_ok = abs(final_ms / initial_ms - 1) <= .05
+-        credible = aa_ok and drift_ok and direct["ci95"][0] > 1.03 and isolated["ci95"][0] > 1.0
++        correctness_after = compare_outputs(funcs, dtype)
++        timing_valid = all(valid_timing_summary(x) for x in (jit_control, direct, isolated))
++        credible = (aa_ok and drift_ok and timing_valid and
++                    direct["ci95"][0] > 1.03 and isolated["ci95"][0] > 1.0)
+         record = {"tokens": tokens, "routes": tokens * args.top_k,
+                   "eliminated_gather_allocation_bytes": tokens * args.top_k * args.k * 2,
+-                  "correctness": correctness, "aa_before": aa_before, "aa_after": aa_after,
++                  "correctness_before": correctness, "correctness_after": correctness_after,
++                  "routing_statistics": route_info,
++                  "aa_before": aa_before, "aa_after": aa_after,
+                   "upstream_vs_jit_contiguous": jit_control, "upstream_vs_indirect": direct,
+                   "matched_jit_vs_indirect": isolated, "aa_ok": aa_ok,
+-                  "drift_ok": drift_ok, "candidate_speed_gate_passed": credible,
++                  "drift_ok": drift_ok, "timing_valid": timing_valid, "candidate_speed_gate_passed": credible,
+                   "memory": {key: peak(fn) for key, fn in funcs.items()}}
+         report["results"].append(record)
+         args.output.write_text(json.dumps(report, indent=2) + "\n")
+--- /dev/null
++++ b/qualification_utils.py
+@@ -0,0 +1,131 @@
++"""Portable qualification helpers; no MLX import or device execution."""
++from __future__ import annotations
++
++from typing import Any
++import math
++import numpy as np
++
++
++def sample_routes(tokens: int, experts: int, top_k: int, distribution: str,
++                  seed: int = 4707) -> np.ndarray:
++    """Generate unique experts per token; repetition across tokens is allowed.
++
++    Skewed inputs allocate 80% of categorical sampling mass to a hot set.
++    Sampling is without replacement, so realized route frequency is not 80%.
++    This is synthetic workload generation, not a learned-router simulator.
++    """
++    if min(tokens, experts, top_k) <= 0 or top_k > experts:
++        raise ValueError("Require tokens > 0 and 0 < top_k <= experts")
++    if experts > np.iinfo(np.uint32).max:
++        raise ValueError("Expert IDs must fit uint32")
++    if distribution not in ("uniform", "skewed"):
++        raise ValueError("distribution must be uniform or skewed")
++    rng = np.random.default_rng(seed)
++    probability = None
++    if distribution == "skewed":
++        hot = min(experts, max(top_k, 8))
++        if hot < experts:
++            probability = np.full(experts, .2 / (experts - hot))
++            probability[:hot] = .8 / hot
++    result = np.empty((tokens, top_k), dtype=np.uint32)
++    for token in range(tokens):
++        result[token] = rng.choice(experts, top_k, replace=False, p=probability)
++    return result
++
++
++def route_statistics(ids: np.ndarray, experts: int) -> dict[str, Any]:
++    ids = np.asarray(ids)
++    if ids.ndim != 2 or not ids.size or experts <= 0:
++        raise ValueError("Expected a nonempty [tokens, top_k] integer array")
++    if not np.issubdtype(ids.dtype, np.integer):
++        raise ValueError("Expert IDs must be integers")
++    if np.any(ids < 0) or np.any(ids >= experts):
++        raise ValueError("Expert ID out of range")
++    ordered = np.sort(ids, axis=1)
++    duplicates = int(np.any(ordered[:, 1:] == ordered[:, :-1], axis=1).sum())
++    counts = np.bincount(ids.reshape(-1).astype(np.int64), minlength=experts)
++    active = counts[counts > 0]
++    return {
++        "tokens_with_duplicate_experts": duplicates,
++        "active_experts": int(active.size),
++        "empty_experts": int(experts - active.size),
++        "routes_per_active_expert_quantiles": {
++            str(q): float(np.quantile(active, q)) for q in (0, .25, .5, .75, 1)
++        },
++        "routes_per_expert": counts.tolist(),
++        "mean_routes_all_experts": float(counts.mean()),
++        "mean_routes_active_experts": float(active.mean()),
++        "count_coefficient_of_variation": float(counts.std() / counts.mean()),
++    }
++
++
++def scalar_bool(value: Any) -> bool:
++    return bool(value.item() if hasattr(value, "item") else value)
++
++
++def bitwise_equal(a: Any, b: Any, xp: Any) -> bool:
++    """Compare floating payload bits, including signed zero and NaN payloads."""
++    if a.shape != b.shape or a.dtype != b.dtype:
++        return False
++    for name, integer in (("float16", "uint16"), ("bfloat16", "uint16"),
++                          ("float32", "uint32"), ("float64", "uint64")):
++        dtype = getattr(xp, name, None)
++        if dtype is not None and a.dtype == dtype:
++            return scalar_bool(xp.array_equal(a.view(getattr(xp, integer)),
++                                             b.view(getattr(xp, integer))))
++    raise ValueError(f"Unsupported payload dtype: {a.dtype}")
++
++
++def check_outputs(outputs: dict[str, Any], xp: Any, tolerance: float) -> list[dict]:
++    """Reject missing outputs, broadcast comparisons and nonfinite controls."""
++    modes = ("upstream", "jit_contiguous", "jit_indirect")
++    if not math.isfinite(tolerance) or tolerance < 0:
++        raise ValueError("Tolerance must be finite and nonnegative")
++    if set(outputs) != set(modes):
++        raise ValueError("All three comparison paths are required")
++    parts = {mode: tuple(outputs[mode]) if isinstance(outputs[mode], (tuple, list))
++             else (outputs[mode],) for mode in modes}
++    sizes = {len(value) for value in parts.values()}
++    if len(sizes) != 1 or 0 in sizes:
++        raise ValueError("Comparison paths must have the same nonzero output count")
++    checks = []
++    for index in range(len(parts["upstream"])):
++        a, b, c = [parts[mode][index] for mode in modes]
++        if a.shape != b.shape or a.shape != c.shape or a.dtype != b.dtype or a.dtype != c.dtype:
++            raise ValueError("Output shape/dtype mismatch; broadcasting is not parity")
++        finite = all(scalar_bool(xp.all(xp.isfinite(x))) for x in (a, b, c))
++        exact = bitwise_equal(b, c, xp)
++        close = all(scalar_bool(xp.allclose(a, other, atol=tolerance, rtol=tolerance))
++                    for other in (b, c))
++        error = float(xp.max(xp.abs(a.astype(xp.float32) - c.astype(xp.float32))).item())
++        checks.append({"finite_all_paths": finite, "matched_jit_bitwise": exact,
++                       "upstream_allclose_both_paths": close,
++                       "max_abs_upstream_error": error})
++    if not all(row["finite_all_paths"] and row["matched_jit_bitwise"] and
++               row["upstream_allclose_both_paths"] for row in checks):
++        raise RuntimeError(f"Correctness gate failed: {checks}")
++    return checks
++
++
++def valid_timing_summary(summary: dict) -> bool:
++    try:
++        lo, hi = summary["ci95"]
++        mean = summary["geomean_speedup"]
++        pairs = summary["pairs"]
++        if len(pairs) < 3 or not all(math.isfinite(x) and x > 0 for x in (lo, hi, mean)):
++            return False
++        if not lo <= hi:
++            return False
++        return all(all(math.isfinite(row[k]) and row[k] > 0
++                       for k in ("a_ms", "b_ms", "speedup")) for row in pairs)
++    except (KeyError, TypeError, ValueError):
++        return False
++
++
++def calibration_passes(summary: dict, fraction: float = .05) -> bool:
++    """Require the entire A/A interval, not only its mean, inside tolerance."""
++    if not valid_timing_summary(summary):
++        return False
++    lo, hi = summary["ci95"]
++    return (1 - fraction <= lo <= hi <= 1 + fraction and
++            1 - fraction <= summary["geomean_speedup"] <= 1 + fraction)
+--- a/tests/test_native.py
++++ b/tests/test_native.py
+@@ -5,6 +5,7 @@
+ from pathlib import Path
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from qualification_utils import bitwise_equal
+ from mlx_nax_indirect import gather_qmm, project_pair, require_m5_nax, validate_routing
+ 
+ 
+@@ -40,7 +41,7 @@
+                         indirect = gather_qmm(x, *w, rows, ids)
+                         control = gather_qmm(x[rows], *w, rows, ids, indirect=False)
+                         mx.eval(indirect, control)
+-                        self.assertTrue(mx.array_equal(indirect, control).item())
++                        self.assertTrue(bitwise_equal(indirect, control, mx))
+ 
+     def test_quantization_configurations(self):
+         mx = self.mx
+@@ -73,7 +74,7 @@
+         x, w, rows, ids = make_case(1, 65, 4, 128, 128, mx.float16)
+         a = gather_qmm(x, *w, rows, ids)
+         b = gather_qmm(x[rows], *w, rows, ids, indirect=False)
+-        self.assertTrue(mx.array_equal(a, b).item())
++        self.assertTrue(bitwise_equal(a, b, mx))
+ 
+     def test_noncontiguous_source_copy(self):
+         mx = self.mx
+@@ -81,7 +82,7 @@
+         x = mx.stack((x, x), axis=-1)[..., 0]
+         a = gather_qmm(x, *w, rows, ids)
+         b = gather_qmm(x[rows], *w, rows, ids, indirect=False)
+-        self.assertTrue(mx.array_equal(a, b).item())
++        self.assertTrue(bitwise_equal(a, b, mx))
+ 
+     def test_bad_indices_rejected_by_checked_api(self):
+         mx = self.mx
+@@ -117,7 +118,7 @@
+         expected = module(x, ids)
+         got = switch_glu(module, x, ids, mode="jit_indirect")
+         control = switch_glu(module, x, ids, mode="jit_contiguous")
+-        self.assertTrue(mx.array_equal(got, control).item())
++        self.assertTrue(bitwise_equal(got, control, mx))
+         self.assertTrue(mx.allclose(got, expected, atol=2e-3, rtol=2e-3).item())
+ 
+     def test_pair(self):
+@@ -126,7 +127,7 @@
+         a = project_pair(x, w, w, rows, ids, mode="jit_indirect")
+         b = project_pair(x, w, w, rows, ids, mode="jit_contiguous")
+         for first, second in zip(a, b):
+-            self.assertTrue(mx.array_equal(first, second).item())
++            self.assertTrue(bitwise_equal(first, second, mx))
+ 
+ 
+ if __name__ == "__main__":
+--- /dev/null
++++ b/tests/test_qualification_utils.py
+@@ -0,0 +1,129 @@
++"""Host-only tests. They do not validate a Metal kernel or GPU speed."""
++import sys
++import unittest
++from pathlib import Path
++import numpy as np
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from qualification_utils import (sample_routes, route_statistics, bitwise_equal,
++                                 check_outputs, calibration_passes,
++                                 valid_timing_summary)
++
++
++def summary(lo=.99, hi=1.01, mean=1):
++    return {"ci95": [lo, hi], "geomean_speedup": mean,
++            "pairs": [{"a_ms": 1., "b_ms": 1., "speedup": 1.} for _ in range(5)]}
++
++
++class TestRouting(unittest.TestCase):
++    def test_each_token_has_distinct_experts(self):
++        for distribution in ("uniform", "skewed"):
++            ids = sample_routes(257, 256, 8, distribution)
++            self.assertEqual(ids.dtype, np.uint32)
++            self.assertTrue(all(len(set(row)) == 8 for row in ids))
++            self.assertEqual(route_statistics(ids, 256)["tokens_with_duplicate_experts"], 0)
++
++    def test_skew_is_not_two_expert_with_replacement(self):
++        ids = sample_routes(1024, 256, 8, "skewed")
++        stats = route_statistics(ids, 256)
++        self.assertGreater(stats["active_experts"], 8)
++        self.assertGreater(sum(stats["routes_per_expert"][:8]), 1024)
++        self.assertEqual(sum(stats["routes_per_expert"]), 8192)
++
++    def test_deterministic(self):
++        a = sample_routes(200, 32, 8, "skewed", 123)
++        np.testing.assert_array_equal(a, sample_routes(200, 32, 8, "skewed", 123))
++        self.assertFalse(np.array_equal(a, sample_routes(200, 32, 8, "skewed", 124)))
++
++    def test_all_experts(self):
++        for dist in ("uniform", "skewed"):
++            ids = sample_routes(3, 8, 8, dist)
++            np.testing.assert_array_equal(np.sort(ids, axis=1), np.tile(np.arange(8), (3, 1)))
++
++    def test_invalid_sampling(self):
++        for args in ((1, 2, 8, "uniform"), (0, 8, 2, "uniform"),
++                     (1, 8, 0, "skewed"), (1, 8, 2, "unknown")):
++            with self.subTest(args=args), self.assertRaises(ValueError):
++                sample_routes(*args)
++
++    def test_statistics_detect_duplicates(self):
++        stats = route_statistics(np.array([[0, 0], [1, 2]], dtype=np.uint32), 4)
++        self.assertEqual(stats["tokens_with_duplicate_experts"], 1)
++        self.assertEqual(stats["empty_experts"], 1)
++
++    def test_statistics_reject_bad_ids(self):
++        for ids in (np.array([[0., 1.]]), np.array([[-1, 0]]), np.array([[0, 4]])):
++            with self.assertRaises(ValueError):
++                route_statistics(ids, 4)
++
++
++class TestParity(unittest.TestCase):
++    def test_signed_zero_is_not_bitwise_equal(self):
++        a, b = np.array([0.], np.float16), np.array([-0.], np.float16)
++        self.assertTrue(np.array_equal(a, b))
++        self.assertFalse(bitwise_equal(a, b, np))
++
++    def test_nan_payloads(self):
++        a = np.array([0x7fc00001], np.uint32).view(np.float32)
++        b = np.array([0x7fc00002], np.uint32).view(np.float32)
++        self.assertTrue(bitwise_equal(a, a.copy(), np))
++        self.assertFalse(bitwise_equal(a, b, np))
++
++    def test_supported_widths(self):
++        for dtype in (np.float16, np.float32, np.float64):
++            a = np.array([1., 2.], dtype)
++            self.assertTrue(bitwise_equal(a, a.copy(), np))
++
++    def test_triplet_passes(self):
++        a = np.array([1., 2.], np.float16)
++        report = check_outputs({key: a.copy() for key in ("upstream", "jit_contiguous", "jit_indirect")}, np, .001)
++        self.assertTrue(report[0]["matched_jit_bitwise"])
++
++    def test_no_broadcast_parity(self):
++        a = np.ones((2, 2), np.float16)
++        with self.assertRaises(ValueError):
++            check_outputs({"upstream": a, "jit_contiguous": a, "jit_indirect": a[:1]}, np, .01)
++
++    def test_no_zip_truncation(self):
++        a = np.ones(2, np.float16)
++        with self.assertRaises(ValueError):
++            check_outputs({"upstream": (a, a), "jit_contiguous": (a,), "jit_indirect": (a,)}, np, .01)
++
++    def test_all_paths_must_be_finite(self):
++        for bad_mode in ("upstream", "jit_contiguous", "jit_indirect"):
++            outputs = {key: np.ones(2, np.float16) for key in ("upstream", "jit_contiguous", "jit_indirect")}
++            outputs[bad_mode][0] = np.inf
++            with np.errstate(invalid="ignore"), self.assertRaises(RuntimeError):
++                check_outputs(outputs, np, .01)
++
++    def test_signed_zero_rejects_candidate(self):
++        with self.assertRaises(RuntimeError):
++            check_outputs({"upstream": np.array([0.], np.float16),
++                           "jit_contiguous": np.array([0.], np.float16),
++                           "jit_indirect": np.array([-0.], np.float16)}, np, .01)
++
++
++class TestTiming(unittest.TestCase):
++    def test_tight_calibration(self):
++        self.assertTrue(calibration_passes(summary()))
++
++    def test_mean_hides_wide_interval(self):
++        self.assertFalse(calibration_passes(summary(.8, 1.2)))
++
++    def test_nonfinite_timing(self):
++        s = summary()
++        s["pairs"][0]["a_ms"] = float("nan")
++        self.assertFalse(valid_timing_summary(s))
++
++    def test_missing_or_empty_timing(self):
++        self.assertFalse(calibration_passes({}))
++        s = summary()
++        s["pairs"] = []
++        self.assertFalse(calibration_passes(s))
++
++    def test_reversed_interval(self):
++        self.assertFalse(calibration_passes(summary(1.02, .98)))
++
++
++if __name__ == "__main__":
++    unittest.main()

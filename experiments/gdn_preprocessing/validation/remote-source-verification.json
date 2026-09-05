@@ -1,0 +1,25 @@
+{
+  "repository": "PhilipJohnBasile/mlx-lm",
+  "commit": "4b1f5191d81427efe8410ea6673b4d67cdc60e0b",
+  "tree": "2fc7239e3d2c6ab0d93fb81cf8207864267fca20",
+  "tree_url": "https://api.github.com/repos/PhilipJohnBasile/mlx-lm/git/trees/2fc7239e3d2c6ab0d93fb81cf8207864267fca20?recursive=1",
+  "matching_files": {
+    "mlx_gdn_prep/__init__.py": "ca8a5399f7c7224eabb2f50c1c4b95222b255ed9",
+    "mlx_gdn_prep/geometry.py": "5ea2d93325f2b894674ac7f3350425f1400077f6",
+    "mlx_gdn_prep/integration.py": "90c8a1277ffb7e5c08353e2c51d555cb47babfee",
+    "mlx_gdn_prep/kernels.py": "1b961443aca375486408fd16f781ab0e4c19e777",
+    "mlx_gdn_prep/oracle.py": "bf372b9f3b9673de50bc5e4ac3e51066a408b5fd",
+    "mlx_gdn_prep/timing.py": "4a9c294ae6b78b2ac1b070c8a285ae499dcc3623",
+    "pyproject.toml": "1f77b146c6c8730824d5c07d53c8332eb2efc13a",
+    "LICENSE.upstream": "98ff47b9ef9d4ac9f1a4bde3db13dd27456c5ea1",
+    "tests/test_headers.py": "b4f868dcaf13e61f257ec209289a3f4db4d22e86",
+    "tests/test_host.py": "b90f9552819daf8de9439d489f0b08cce61d6cd2",
+    "tests/test_native.py": "7599158ea07e293537f6bae9dcb4d5c112546a6c",
+    "tests/test_timing.py": "c096c8dbd868beb4444c81f0c83efa6ef71022c5",
+    "tools/benchmark.py": "5cca74f8d2e60d507cdb0dbc1977aff41dca96b4",
+    "tools/emit_metal.py": "ea95c0e4fed7d5a3e241023a105d3153fc4c146f",
+    "tools/qualify_m5.py": "5696e6dd36ebbfd3c0c22e59e5207c7ee6310425",
+    "tools/test_kernel_host.py": "b29b86af8fbe4857440f517ea9fb796332acb7b0"
+  },
+  "note": "All 14 Python files, pyproject and license match. The bundle has expanded documentation, bundled headers and evidence beyond the branch."
+}

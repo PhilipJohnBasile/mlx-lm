@@ -1,0 +1,25 @@
+test_all_paths_must_be_finite (test_qualification_utils.TestParity.test_all_paths_must_be_finite) ... ok
+test_nan_payloads (test_qualification_utils.TestParity.test_nan_payloads) ... ok
+test_no_broadcast_parity (test_qualification_utils.TestParity.test_no_broadcast_parity) ... ok
+test_no_zip_truncation (test_qualification_utils.TestParity.test_no_zip_truncation) ... ok
+test_signed_zero_is_not_bitwise_equal (test_qualification_utils.TestParity.test_signed_zero_is_not_bitwise_equal) ... ok
+test_signed_zero_rejects_candidate (test_qualification_utils.TestParity.test_signed_zero_rejects_candidate) ... ok
+test_supported_widths (test_qualification_utils.TestParity.test_supported_widths) ... ok
+test_triplet_passes (test_qualification_utils.TestParity.test_triplet_passes) ... ok
+test_all_experts (test_qualification_utils.TestRouting.test_all_experts) ... ok
+test_deterministic (test_qualification_utils.TestRouting.test_deterministic) ... ok
+test_each_token_has_distinct_experts (test_qualification_utils.TestRouting.test_each_token_has_distinct_experts) ... ok
+test_invalid_sampling (test_qualification_utils.TestRouting.test_invalid_sampling) ... ok
+test_skew_is_not_two_expert_with_replacement (test_qualification_utils.TestRouting.test_skew_is_not_two_expert_with_replacement) ... ok
+test_statistics_detect_duplicates (test_qualification_utils.TestRouting.test_statistics_detect_duplicates) ... ok
+test_statistics_reject_bad_ids (test_qualification_utils.TestRouting.test_statistics_reject_bad_ids) ... ok
+test_mean_hides_wide_interval (test_qualification_utils.TestTiming.test_mean_hides_wide_interval) ... ok
+test_missing_or_empty_timing (test_qualification_utils.TestTiming.test_missing_or_empty_timing) ... ok
+test_nonfinite_timing (test_qualification_utils.TestTiming.test_nonfinite_timing) ... ok
+test_reversed_interval (test_qualification_utils.TestTiming.test_reversed_interval) ... ok
+test_tight_calibration (test_qualification_utils.TestTiming.test_tight_calibration) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.150s
+
+OK

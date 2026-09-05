@@ -1,0 +1,20 @@
+test_baseline_blob (test_host_contract.TestHostContract.test_baseline_blob) ... ok
+test_disabled_gate_does_not_query_gpu (test_host_contract.TestHostContract.test_disabled_gate_does_not_query_gpu) ... ok
+test_duplicate_experts_and_roundtrip (test_host_contract.TestHostContract.test_duplicate_experts_and_roundtrip) ... ok
+test_empty_shapes (test_host_contract.TestHostContract.test_empty_shapes) ... ok
+test_every_small_permutation (test_host_contract.TestHostContract.test_every_small_permutation) ... ok
+test_invalid_layouts (test_host_contract.TestHostContract.test_invalid_layouts) ... ok
+test_layout_shapes (test_host_contract.TestHostContract.test_layout_shapes) ... ok
+test_m5_device_selector (test_host_contract.TestHostContract.test_m5_device_selector) ... ok
+test_permutation_width_guard (test_host_contract.TestHostContract.test_permutation_width_guard) ... ok
+test_route_count_is_not_a_jit_template (test_host_contract.TestHostContract.test_route_count_is_not_a_jit_template) ... ok
+test_training_calls_do_not_enable_custom_kernel (test_host_contract.TestHostContract.test_training_calls_do_not_enable_custom_kernel) ... ok
+test_aa_identity (test_benchmark_math.TestBenchmarkMath.test_aa_identity) ... ok
+test_case_validation (test_benchmark_math.TestBenchmarkMath.test_case_validation) ... ok
+test_deterministic_pair_resampling (test_benchmark_math.TestBenchmarkMath.test_deterministic_pair_resampling) ... ok
+test_ratio_direction (test_benchmark_math.TestBenchmarkMath.test_ratio_direction) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 1.312s
+
+OK

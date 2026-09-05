@@ -1,0 +1,8 @@
+{
+  "component_validation_passed": false,
+  "performance_qualified": false,
+  "compiler": "not_run",
+  "native_tests": "not_run",
+  "benchmark": "not_run",
+  "error": "Native M5 checks require macOS, not a host shim"
+}

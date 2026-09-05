@@ -1,0 +1,73 @@
+evidence/gdn_prepare.metal:441:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+           ^
+evidence/gdn_prepare.metal:449:8: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+    if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+       ^
+evidence/gdn_prepare.metal:458:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:640:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+           ^
+evidence/gdn_prepare.metal:648:8: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+    if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+       ^
+evidence/gdn_prepare.metal:657:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:839:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+           ^
+evidence/gdn_prepare.metal:847:8: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+    if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+       ^
+evidence/gdn_prepare.metal:856:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:1038:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+           ^
+evidence/gdn_prepare.metal:1046:8: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+    if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+       ^
+evidence/gdn_prepare.metal:1055:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:1246:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:1260:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+           ^
+evidence/gdn_prepare.metal:1269:20: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+                if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+                   ^
+evidence/gdn_prepare.metal:1480:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:1494:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+           ^
+evidence/gdn_prepare.metal:1503:20: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+                if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+                   ^
+evidence/gdn_prepare.metal:1714:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:1728:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+           ^
+evidence/gdn_prepare.metal:1737:20: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+                if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+                   ^
+evidence/gdn_prepare.metal:1948:16: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+            if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+               ^
+evidence/gdn_prepare.metal:1962:12: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+        if constexpr (HAS_LENGTHS) end = metal::clamp(int(lengths[b]), 0, S);
+           ^
+evidence/gdn_prepare.metal:1971:20: warning: constexpr if is a C++17 extension [-Wc++17-extensions]
+                if constexpr (HAS_MASK) valid = mask[ulong(b) * S + src_t];
+                   ^
+24 warnings generated.

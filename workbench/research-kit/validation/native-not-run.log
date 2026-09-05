@@ -1,0 +1,2 @@
+bash: line 18: ./verify_m5.sh: Permission denied
+Native qualification exit=126 (expected refusal on Linux)

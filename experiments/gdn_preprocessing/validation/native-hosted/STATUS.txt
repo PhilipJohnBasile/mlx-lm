@@ -1,0 +1,1 @@
+Native component tests passed on the recorded hosted device. This is not physical M5 qualification or a performance measurement.

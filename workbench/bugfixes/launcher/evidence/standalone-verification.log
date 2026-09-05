@@ -1,0 +1,12 @@
+Launcher-only validation; no native MLX, CUDA, Metal or RDMA execution.
+baseline: process exit 1
+----------------------------------------------------------------------
+Ran 16 tests in 15.505s
+
+FAILED (failures=33)
+patched: process exit 0
+----------------------------------------------------------------------
+Ran 16 tests in 16.536s
+
+OK
+Before/after verification: PASS

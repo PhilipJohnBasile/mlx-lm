@@ -1,0 +1,1 @@
+PASS python -m compileall -q mlx_lm tests tools

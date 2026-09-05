@@ -1,0 +1,27 @@
+[
+  {
+    "child_exit": 0,
+    "launcher_exit": 0,
+    "stderr": ""
+  },
+  {
+    "child_exit": 1,
+    "launcher_exit": 0,
+    "stderr": "\u001b[33m[WARN] Node with rank 0 exited with code 1 \u001b[0m"
+  },
+  {
+    "child_exit": 7,
+    "launcher_exit": 0,
+    "stderr": "\u001b[33m[WARN] Node with rank 0 exited with code 7 \u001b[0m"
+  },
+  {
+    "child_exit": 42,
+    "launcher_exit": 0,
+    "stderr": "\u001b[33m[WARN] Node with rank 0 exited with code 42 \u001b[0m"
+  },
+  {
+    "child_exit": 255,
+    "launcher_exit": 0,
+    "stderr": "\u001b[33m[WARN] Node with rank 0 exited with code 255 \u001b[0m"
+  }
+]

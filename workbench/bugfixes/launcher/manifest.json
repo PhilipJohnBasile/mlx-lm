@@ -1,0 +1,90 @@
+{
+  "repository": "ml-explore/mlx",
+  "upstream_commit": "b6368984b8e02a3fb3ee7986846c0fb85e1fccf7",
+  "related_issue": 4319,
+  "scope": "launcher false-success exit status, not RDMA crash",
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux",
+    "machine": "x86_64"
+  },
+  "files": {
+    "LICENSE": {
+      "size": 1066,
+      "sha256": "ccfab7ccb2ea306f71531c8ca77bb55507606cd90768b1e32b8b52ab5b48cf01"
+    },
+    "README.md": {
+      "size": 7828,
+      "sha256": "3c97e30b081990534225cab91f8994016a7d9c1de6c20928a22316c34b0a49a5"
+    },
+    "baseline/python/mlx/_distributed_utils/common.py": {
+      "size": 3864,
+      "sha256": "407793d67635491c16bd37ce2928a0ba8ff11c0478110878adae79a3fd406e29"
+    },
+    "baseline/python/mlx/_distributed_utils/launch.py": {
+      "size": 18561,
+      "sha256": "6a85d23ed3e505cb1d410d18139ae61599f6805f6ee2b98a1030a28d8a5a7f66"
+    },
+    "evidence/baseline-tests.log": {
+      "size": 24470,
+      "sha256": "e84b015a9259cdff38c4aca7cdb9f9fc4f10ca34e7ec0af3edee392e293ba6a3"
+    },
+    "evidence/patch-check.log": {
+      "size": 279,
+      "sha256": "d0717b2fa12ee0c4b3d64016fe2397c5885a53a70baa94b9daac0501bf4cad74"
+    },
+    "evidence/patched-tests.log": {
+      "size": 1878,
+      "sha256": "96b09ce3ed65277292473e3a1833ef47b5d0c13af89041c2f893873878a59237"
+    },
+    "evidence/standalone/baseline.log": {
+      "size": 24944,
+      "sha256": "0f355918ec1c875b6ae5c2884910328ee9e3d793316e8cba5007854573f212b8"
+    },
+    "evidence/standalone/patched.log": {
+      "size": 1878,
+      "sha256": "39829651cbcef1e693d717d60d79451d659d942c799be6cb3bfd01d3577e820e"
+    },
+    "evidence/standalone-verification.log": {
+      "size": 369,
+      "sha256": "42269fd678d722362a157ac985eac457e348abd753e6e3e3f77ac797b01ce723"
+    },
+    "evidence/stress-tests.log": {
+      "size": 2260,
+      "sha256": "d62eb8b85cba6b625b0d846a3796a85de0f511d6e2a3d2b14816f010b729ad7e"
+    },
+    "mlx-launch-exit-status.patch": {
+      "size": 15701,
+      "sha256": "e64679d61bbaeea80f19a0a706a2c5d3b05971fc5008e658d11598f21b5902d0"
+    },
+    "patched/python/mlx/_distributed_utils/common.py": {
+      "size": 3864,
+      "sha256": "407793d67635491c16bd37ce2928a0ba8ff11c0478110878adae79a3fd406e29"
+    },
+    "patched/python/mlx/_distributed_utils/launch.py": {
+      "size": 19035,
+      "sha256": "ed7d9c30d8e19d71da27e5cd02acf2fe56f4894bbed94319cb102ffec6ef9335"
+    },
+    "patched/python/tests/test_launch_exit_status.py": {
+      "size": 11169,
+      "sha256": "8faa9fc6c2cdf7d81c718913723ae35cb4c6b8a0bba65ff75d11e734b58d7c31"
+    },
+    "verify_launcher_only.py": {
+      "size": 3825,
+      "sha256": "fdf57384372cf78247f66b2bbf6ed0c1318836564605bc06c2a81ce98e99a4fd"
+    }
+  },
+  "validation": {
+    "new_test_methods": 16,
+    "baseline_failures_including_subtests": 33,
+    "patched_test_methods_passed": 16,
+    "race_repetitions_passed": 15,
+    "standalone_before_after_verifier": "PASS",
+    "byte_compilation": "PASS",
+    "git_diff_check": "PASS",
+    "git_apply_and_byte_comparison": "PASS",
+    "native_mlx_engine_exercised": false,
+    "full_repository_suite_exercised": false,
+    "published_to_github": false
+  }
+}

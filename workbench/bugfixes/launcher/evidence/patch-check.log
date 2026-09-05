@@ -1,0 +1,5 @@
+PASS: git apply --check
+PASS: git apply /mnt/data/mlx-launch-exit-status/mlx-launch-exit-status.patch
+PASS: git apply -R
+PASS: applied bytes equal tested file: python/mlx/_distributed_utils/launch.py
+PASS: applied bytes equal tested file: python/tests/test_launch_exit_status.py

@@ -1,0 +1,18 @@
+test_default_backend_exit_code (test_distributed_launch.TestDistributedLaunch.test_default_backend_exit_code) ... ok
+test_failure_after_peer_success (test_distributed_launch.TestDistributedLaunch.test_failure_after_peer_success) ... ok
+test_failure_before_first_poll (test_distributed_launch.TestDistributedLaunch.test_failure_before_first_poll) ... ok
+test_failure_survives_peer_cancellation (test_distributed_launch.TestDistributedLaunch.test_failure_survives_peer_cancellation) ... ok
+test_invalid_backend (test_distributed_launch.TestDistributedLaunch.test_invalid_backend) ... ok
+test_last_rank_finishes_during_poll (test_distributed_launch.TestDistributedLaunch.test_last_rank_finishes_during_poll) ... ok
+test_local_rank_exit_codes (test_distributed_launch.TestDistributedLaunch.test_local_rank_exit_codes) ... ok
+test_mpi_exit_codes (test_distributed_launch.TestDistributedLaunch.test_mpi_exit_codes) ... ok
+test_mpi_interrupt (test_distributed_launch.TestDistributedLaunch.test_mpi_interrupt) ... ok
+test_print_python (test_distributed_launch.TestDistributedLaunch.test_print_python) ... ok
+test_signal_exit_codes (test_distributed_launch.TestDistributedLaunch.test_signal_exit_codes) ... ok
+test_successful_ranks (test_distributed_launch.TestDistributedLaunch.test_successful_ranks) ... ok
+test_worker_start_failure (test_distributed_launch.TestDistributedLaunch.test_worker_start_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 91.692s
+
+OK

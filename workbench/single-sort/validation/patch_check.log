@@ -1,0 +1,4 @@
+PASS git diff --check
+PASS git apply --check
+PASS applied patch reconstructs all four tested/source files byte-for-byte
+The local test repository is a reference snapshot, not a full MLX-LM checkout.

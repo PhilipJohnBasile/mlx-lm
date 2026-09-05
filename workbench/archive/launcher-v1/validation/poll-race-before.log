@@ -1,0 +1,30 @@
+test_last_rank_finishes_during_poll (test_distributed_launch.TestDistributedLaunch.test_last_rank_finishes_during_poll) ... FAIL
+
+======================================================================
+FAIL: test_last_rank_finishes_during_poll (test_distributed_launch.TestDistributedLaunch.test_last_rank_finishes_during_poll)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/mnt/data/mlx-launch-fix/python/tests/test_distributed_launch.py", line 118, in test_last_rank_finishes_during_poll
+    self.assert_exit(
+    ~~~~~~~~~~~~~~~~^
+        self.run_launch(
+        ^^^^^^^^^^^^^^^^
+    ...<18 lines>...
+        42,
+        ^^^
+    )
+    ^
+  File "/mnt/data/mlx-launch-fix/python/tests/test_distributed_launch.py", line 74, in assert_exit
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        result.returncode, expected, msg=result.stdout + result.stderr
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: 0 != 42 : [33m[WARN] Node with rank 0 exited with code 42 [0m
+
+
+----------------------------------------------------------------------
+Ran 1 test in 1.537s
+
+FAILED (failures=1)

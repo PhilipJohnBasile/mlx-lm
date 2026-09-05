@@ -1,0 +1,15 @@
+{
+  "pdf_pages": 14,
+  "pdf_sha256": "55bb2bff9813f2fe4db3c9274fdf08bb77c2d0aa12dd88532938d9d9d2b98847",
+  "pdf_link_regions": 58,
+  "distinct_external_source_urls": 21,
+  "resolved_internal_links": 35,
+  "page_bounds_check": "all extracted text spans inside page boundaries",
+  "visual_review": "All pages reviewed in contact sheet; full-size visual review sampled pages 1,3,4,11,12,14. No clipping, overlap, missing glyphs or broken table geometry observed in reviewed views.",
+  "native_metal_compilation": "not_run",
+  "native_m5_performance": "not_measured",
+  "host_run": "40 Python tests and 11010821 existing C++ address/layout checks passed in final run",
+  "gpu_kernel_source": "unchanged from original supplied prototype",
+  "patch_check": "applies cleanly to original prototype; Python reconstruction matches delivered source",
+  "repository_writes": false
+}
