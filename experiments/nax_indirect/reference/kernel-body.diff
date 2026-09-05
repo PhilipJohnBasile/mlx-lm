@@ -1,0 +1,126 @@
+--- pinned-upstream-kernel-body
++++ pilot-kernel-body
+@@ -1,3 +1,14 @@
++// Derived from MLX b6368984b, affine_gather_qmm_rhs_nax. See LICENSE.upstream.
++// The only experimental path is INDIRECT=true. K and N must be multiples of 64.
++constexpr int group_size = GROUP_SIZE;
++constexpr int bits = BITS;
++constexpr int BN = 64, BK = 64, WM = 2, WN = 2;
++constexpr bool transpose = true, align_N = true, align_M = ALIGNED_M;
++const int K = x_shape[1], M = indices_shape[0], N = w_shape[1];
++const int source_rows = x_shape[0], expert_count = w_shape[0];
++const uint3 tid = threadgroup_position_in_grid;
++const uint simd_group_id = simdgroup_index_in_threadgroup;
++const uint simd_lane_id = thread_index_in_simdgroup;
+ 
+   constexpr int pack_factor = get_pack_factor<bits, 8>();
+   constexpr int bytes_per_pack = get_bytes_per_pack<bits>();
+@@ -40,7 +51,10 @@
+ 
+   // Move x and output to the correct block
+   auto wl = (const device uint8_t*)w;
+-  x += y_row_long * K;
++  const device T* x_base = x;
++  if constexpr (!INDIRECT) {
++    x += y_row_long * K;
++  }
+   y += y_row_long * N + y_col_long;
+   wl += transpose ? y_col_long * K_w : y_col * bytes_per_pack / pack_factor;
+   scales += transpose ? y_col_long * K_g : y_col / group_size;
+@@ -68,6 +82,11 @@
+   constexpr short BC = transpose ? TK : TN;
+ 
+   using AccumType = float;
++
++  mlx_nax_route::IndirectRows<TM> row_map;
++  if constexpr (INDIRECT) {
++    row_map.initialize(rows, y_row + tm, M, source_rows, K, simd_lane_id);
++  }
+ 
+   // Do as many matmuls as necessary
+   uint32_t index;
+@@ -96,7 +115,20 @@
+     NAXTile<AccumType, TM, TN> Dtile;
+     Dtile.clear();
+ 
+-    const device T* xn = x + tm * K;
++    // Poison an invalid expert instead of reading outside the weight tensor.
++    if (index >= uint32_t(expert_count)) {
++      for (short i = 0; i < Dtile.kElemsPerTile; ++i) {
++        Dtile.elems()[i] = NAN;
++      }
++      Dtile.store_slice(y + tm * N + tn, N,
++                       short2(0, m_lo_lim), short2(SN, m_hi_lim));
++      continue;
++    }
++
++    const device T* xn = x;
++    if constexpr (!INDIRECT) {
++      xn += tm * K;
++    }
+ 
+     // Prepare threadgroup loading operations
+     thread loader_w_t loader_w(
+@@ -129,7 +161,9 @@
+ 
+               volatile int compiler_barrier;
+ 
+-              if constexpr (kAlignedM.value) {
++              if constexpr (INDIRECT) {
++                row_map.load(Atile, x_base, k * BK + kk1);
++              } else if constexpr (kAlignedM.value) {
+                 Atile.load(xn + kk1, K);
+               } else {
+                 Atile.load_safe(xn + kk1, K, short2(SK, sgp_sm));
+@@ -152,43 +186,12 @@
+             }
+           }
+ 
+-          xn += BK;
++          if constexpr (!INDIRECT) {
++            xn += BK;
++          }
+           loader_w.next();
+         }
+ 
+-        if (!align_K) {
+-          threadgroup_barrier(mem_flags::mem_threadgroup);
+-          loader_w.load_safe(tile_w);
+-          threadgroup_barrier(mem_flags::mem_threadgroup);
+-
+-          STEEL_PRAGMA_NO_UNROLL
+-          for (int kk1 = 0; kk1 < BK; kk1 += SK) {
+-            if (sg_active) {
+-              NAXTile<T, TM, TK> Atile;
+-              NAXTile<T, BR, BC> Btile;
+-
+-              volatile int compiler_barrier;
+-
+-              const short psk = min(int(SK), max(0, (BK - kk1)));
+-              Atile.load_safe(xn + kk1, K, short2(psk, sgp_sm));
+-
+-              if constexpr (transpose) {
+-                Btile.template load<T, BK_padded, 1>(Ws + tn * BK_padded + kk1);
+-              } else {
+-                Btile.template load<T, BN_padded, 1>(Ws + tn + kk1 * BN_padded);
+-              }
+-
+-              tile_matmad_nax(
+-                  Dtile,
+-                  Atile,
+-                  metal::bool_constant<false>{},
+-                  Btile,
+-                  metal::bool_constant<transpose>{});
+-
+-              (void)compiler_barrier;
+-            }
+-          }
+-        }
+ 
+         threadgroup_barrier(mem_flags::mem_threadgroup);
+ 
+@@ -210,3 +213,4 @@
+       });
+     });
+   }
++
