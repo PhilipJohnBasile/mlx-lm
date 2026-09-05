@@ -1,0 +1,42 @@
+{
+  "archive_base_commit": "5db58608fa5d21d2613985cefe94a243420ccd63",
+  "archive_path": "workbench/single-sort",
+  "performance_qualified": false,
+  "files": {
+    "single-sort-block-bf16-01.json": {
+      "gzip_file": "single-sort-block-bf16-01.json.gz",
+      "bytes": 30195,
+      "sha256": "b92d0e7f53a648b95f5ca57bfcec8ff729d808bf919344bb25f0b35c12707bec"
+    },
+    "single-sort-block-bf16-01.log": {
+      "gzip_file": "single-sort-block-bf16-01.log.gz",
+      "bytes": 534,
+      "sha256": "c7dfbdb1800aa54c0d2ba733768a10b4931929867c73801ff1ab6b47bd983b46"
+    },
+    "single-sort-native-01.log": {
+      "gzip_file": "single-sort-native-01.log.gz",
+      "bytes": 1157,
+      "sha256": "7893b369e830d4c313500ead6682284128cc55b5019cc7460e641e571c2a67cc"
+    },
+    "single-sort-routing-bf16-01.json": {
+      "gzip_file": "single-sort-routing-bf16-01.json.gz",
+      "bytes": 23097,
+      "sha256": "67bcfa498a2bf6f9c535769830e8ae9879af28945ddf95fb9a0fc2f422ca4933"
+    },
+    "single-sort-routing-bf16-01.log": {
+      "gzip_file": "single-sort-routing-bf16-01.log.gz",
+      "bytes": 451,
+      "sha256": "aa5b6acb6f2e7a5c7e2875d961e6a537d1837621c4fe72905fd16064785369cf"
+    },
+    "single-sort-routing-bf16-02.json": {
+      "gzip_file": "single-sort-routing-bf16-02.json.gz",
+      "bytes": 23502,
+      "sha256": "7fb5e135acea86bb706360611d505481be7e6a1683bc8545ba30ca327f5f7056"
+    },
+    "single-sort-routing-bf16-02.log": {
+      "gzip_file": "single-sort-routing-bf16-02.log.gz",
+      "bytes": 366,
+      "sha256": "95c8e796f9469aab271b1b70acfa1e35d4df68c12ec76b454e8225208f554a8c"
+    }
+  }
+}
