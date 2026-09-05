@@ -5,8 +5,11 @@ import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent
+headers = Path(sys.argv[2])
 kernels = runpy.run_path(str(root / 'kernels.py'))
-source = ['#include <metal_stdlib>\n#include <metal_simdgroup>\nusing namespace metal;\n', kernels['HEADER']]
+source = ['#include <metal_stdlib>\n#include <metal_simdgroup>\nusing namespace metal;\n']
+source += [(headers / name).read_text().replace('#pragma once', '') for name in ('bf16.h', 'bf16_math.h')]
+source.append(kernels['HEADER'])
 count = 0
 for mode, mask_space, length_space in itertools.product(('direct', 'fused'), ('constant', 'device'), ('constant', 'device')):
     name = f'gdn_prepare_{mode}_{mask_space[0]}m_{length_space[0]}l'

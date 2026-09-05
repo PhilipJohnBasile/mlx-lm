@@ -13,6 +13,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ml-explore/mlx
+          ref: b6368984b8e02a3fb3ee7986846c0fb85e1fccf7
+          path: mlx-headers
+          sparse-checkout: mlx/backend/metal/kernels
+          persist-credentials: false
       - name: Generate and compile direct and fused variants
         shell: bash
         run: |
@@ -23,7 +30,9 @@ jobs:
             xcodebuild -downloadComponent MetalToolchain
             xcrun -sdk macosx metal --version > evidence/compiler.txt 2>&1
           fi
-          python3 experiments/gdn_preprocessing/emit_metal.py evidence/gdn_prepare.metal | tee evidence/generation.log
+          echo 'abd87446a310b77ac530ef52a324feae5cb285d03ec9613e3a88ebb71410fdcb  mlx-headers/mlx/backend/metal/kernels/bf16.h' | shasum -a 256 -c -
+          echo '1f374f8380f756eb89acf6a847741cb8fecbe642945e159fb6208d804cc06496  mlx-headers/mlx/backend/metal/kernels/bf16_math.h' | shasum -a 256 -c -
+          python3 experiments/gdn_preprocessing/emit_metal.py evidence/gdn_prepare.metal mlx-headers/mlx/backend/metal/kernels | tee evidence/generation.log
           xcrun -sdk macosx metal -std=metal3.2 -fno-fast-math -c evidence/gdn_prepare.metal -o evidence/gdn_prepare.air 2>&1 | tee evidence/compile.log
           xcrun -sdk macosx metallib evidence/gdn_prepare.air -o evidence/gdn_prepare.metallib 2>&1 | tee evidence/link.log
           shasum -a 256 experiments/gdn_preprocessing/kernels.py evidence/gdn_prepare.metal evidence/gdn_prepare.metallib > evidence/SHA256SUMS
