@@ -115,6 +115,11 @@
       "gzip_file": "moe4-short-repeat-02__report.json.gz",
       "bytes": 3037932,
       "sha256": "8c038af7ad8c3119c855686c0f3a04b112fc3d03c8ef38ec3637b49e215005fa"
+    },
+    "dense4-long-c4-repeat-02/report.json": {
+      "gzip_file": "dense4-long-c4-repeat-02__report.json.gz",
+      "bytes": 1328255,
+      "sha256": "6ddd74e2179b664c07e3bfc228e9cfd40a7512749605a259dcd5ab0c1e522433"
     }
   },
   "reproducible_build_outputs": {

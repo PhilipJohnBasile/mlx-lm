@@ -37,3 +37,13 @@ Fifteen rounds per cell, unchanged gates, fresh output. Both repetitions pass A/
 | 4 | 1229.1 / 1212.4 | 1.0157 (1.0093-1.0225) |
 
 Concurrency one is neutral; concurrency four improves about 1.57%. Neither reaches the 5% target. The dense long/concurrency-four memory-invalid cell still requires a separate repeat.
+
+## Dense long/concurrency-four repeat
+
+A separate five-round repeat completed with bitwise log-probability and final-cache
+parity before and after timing. It remains **invalid**: four swap-in pages occurred
+in one timed request (no swap-out or page-out). The A/A and drift gates passed.
+The observed 1.0205x throughput ratio (95% interval 1.0195–1.0216) is retained as
+adverse/inconclusive evidence, not an accepted performance result. No timing or
+correctness threshold was relaxed and no automatic mode was enabled. The raw
+receipt is `dense4-long-c4-repeat-02__report.json.gz`.
