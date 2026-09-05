@@ -1,3 +1,5 @@
+# Preserve the hash-verified research handoff. Active experiments remain linted.
+exclude: ^(workbench/|experiments/gdn_preprocessing/)
 repos:
 -   repo: https://github.com/psf/black-pre-commit-mirror
     rev: 25.1.0
@@ -9,3 +11,11 @@ repos:
     -   id: isort
         args:
             - --profile=black
+-   repo: local
+    hooks:
+    -   id: verify-research-handoff
+        name: Verify immutable research handoff
+        entry: python3 workbench/verify_inventory.py
+        language: system
+        pass_filenames: false
+        always_run: true
