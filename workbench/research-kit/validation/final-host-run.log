@@ -1,0 +1,57 @@
+test_all_paths_must_be_finite (test_qualification_utils.TestParity.test_all_paths_must_be_finite) ... ok
+test_nan_payloads (test_qualification_utils.TestParity.test_nan_payloads) ... ok
+test_no_broadcast_parity (test_qualification_utils.TestParity.test_no_broadcast_parity) ... ok
+test_no_zip_truncation (test_qualification_utils.TestParity.test_no_zip_truncation) ... ok
+test_signed_zero_is_not_bitwise_equal (test_qualification_utils.TestParity.test_signed_zero_is_not_bitwise_equal) ... ok
+test_signed_zero_rejects_candidate (test_qualification_utils.TestParity.test_signed_zero_rejects_candidate) ... ok
+test_supported_widths (test_qualification_utils.TestParity.test_supported_widths) ... ok
+test_triplet_passes (test_qualification_utils.TestParity.test_triplet_passes) ... ok
+test_all_experts (test_qualification_utils.TestRouting.test_all_experts) ... ok
+test_deterministic (test_qualification_utils.TestRouting.test_deterministic) ... ok
+test_each_token_has_distinct_experts (test_qualification_utils.TestRouting.test_each_token_has_distinct_experts) ... ok
+test_invalid_sampling (test_qualification_utils.TestRouting.test_invalid_sampling) ... ok
+test_skew_is_not_two_expert_with_replacement (test_qualification_utils.TestRouting.test_skew_is_not_two_expert_with_replacement) ... ok
+test_statistics_detect_duplicates (test_qualification_utils.TestRouting.test_statistics_detect_duplicates) ... ok
+test_statistics_reject_bad_ids (test_qualification_utils.TestRouting.test_statistics_reject_bad_ids) ... ok
+test_mean_hides_wide_interval (test_qualification_utils.TestTiming.test_mean_hides_wide_interval) ... ok
+test_missing_or_empty_timing (test_qualification_utils.TestTiming.test_missing_or_empty_timing) ... ok
+test_nonfinite_timing (test_qualification_utils.TestTiming.test_nonfinite_timing) ... ok
+test_reversed_interval (test_qualification_utils.TestTiming.test_reversed_interval) ... ok
+test_tight_calibration (test_qualification_utils.TestTiming.test_tight_calibration) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.150s
+
+OK
+test_actual_layer_types_win (test_plan_workloads.TestPlanner.test_actual_layer_types_win) ... ok
+test_budget_is_not_safety_claim (test_plan_workloads.TestPlanner.test_budget_is_not_safety_claim) ... ok
+test_c4_128k_dense (test_plan_workloads.TestPlanner.test_c4_128k_dense) ... ok
+test_dense_projection_geometry (test_plan_workloads.TestPlanner.test_dense_projection_geometry) ... ok
+test_dense_state_and_kv (test_plan_workloads.TestPlanner.test_dense_state_and_kv) ... ok
+test_element_width_change_explicit (test_plan_workloads.TestPlanner.test_element_width_change_explicit) ... ok
+test_journal_estimate_is_not_full_snapshot (test_plan_workloads.TestPlanner.test_journal_estimate_is_not_full_snapshot) ... ok
+test_missing_geometry_fails (test_plan_workloads.TestPlanner.test_missing_geometry_fails) ... ok
+test_moe_state_and_shared_expert (test_plan_workloads.TestPlanner.test_moe_state_and_shared_expert) ... ok
+test_root_config_accepted (test_plan_workloads.TestPlanner.test_root_config_accepted) ... ok
+test_topk_rejects_impossible_geometry (test_plan_workloads.TestPlanner.test_topk_rejects_impossible_geometry) ... ok
+test_unsupported_architecture_fails (test_plan_workloads.TestPlanner.test_unsupported_architecture_fails) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.002s
+
+OK
+test_admitted_shapes (test_policy.TestPolicy.test_admitted_shapes) ... ok
+test_invalid_geometry (test_policy.TestPolicy.test_invalid_geometry) ... ok
+test_kernel_is_self_contained (test_policy.TestPolicy.test_kernel_is_self_contained) ... ok
+test_rejected_device_policy (test_policy.TestPolicy.test_rejected_device_policy) ... ok
+test_row_map_is_outside_inner_loops (test_policy.TestPolicy.test_row_map_is_outside_inner_loops) ... ok
+test_row_tile_boundary (test_policy.TestPolicy.test_row_tile_boundary) ... ok
+test_saved_allocation (test_policy.TestPolicy.test_saved_allocation) ... ok
+test_supported_device_policy (test_policy.TestPolicy.test_supported_device_policy) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.002s
+
+OK
+PASS: 11010821 address/layout checks (CPU, not Metal execution)
+Host checks passed; no native Metal test or performance measurement was run.

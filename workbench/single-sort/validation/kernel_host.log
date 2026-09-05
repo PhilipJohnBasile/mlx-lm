@@ -1,0 +1,2 @@
+PASS 1773 host kernel cases; 13065859 output elements checked; exact source body; ASan/UBSan enabled
+NOT a Metal compile, GPU execution, or performance measurement

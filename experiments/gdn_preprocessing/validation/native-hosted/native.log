@@ -1,0 +1,12 @@
+Actual device: {'device_name': 'Apple Paravirtual device', 'max_recommended_working_set_size': 5010800640, 'memory_size': 7516192768, 'architecture': 'air64_v27', 'max_buffer_length': 3758096384, 'resource_limit': 499000}
+test_chunked_history_then_next_token (__main__.NativeTests.test_chunked_history_then_next_token) ... ok
+test_dtype_geometry_mask_and_lengths (__main__.NativeTests.test_dtype_geometry_mask_and_lengths) ... ok
+test_every_supported_tap_count (__main__.NativeTests.test_every_supported_tap_count) ... ok
+test_masked_nan_never_enters_convolution (__main__.NativeTests.test_masked_nan_never_enters_convolution) ... ok
+test_noncontiguous_and_broadcast (__main__.NativeTests.test_noncontiguous_and_broadcast) ... ok
+test_recurrent_layer_and_next_token (__main__.NativeTests.test_recurrent_layer_and_next_token) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 21.772s
+
+OK

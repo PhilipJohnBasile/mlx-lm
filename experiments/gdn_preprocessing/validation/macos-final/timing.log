@@ -1,0 +1,9 @@
+test_aa_interval_not_only_point_estimate (test_timing.TimingTests.test_aa_interval_not_only_point_estimate) ... ok
+test_known_ratio (test_timing.TimingTests.test_known_ratio) ... ok
+test_payload_rejects_signed_zero_and_different_shapes (test_timing.TimingTests.test_payload_rejects_signed_zero_and_different_shapes) ... ok
+test_reject_invalid_timings (test_timing.TimingTests.test_reject_invalid_timings) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.021s
+
+OK

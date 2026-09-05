@@ -1,0 +1,8 @@
+test_last_rank_finishes_during_poll (test_distributed_launch.TestDistributedLaunch.test_last_rank_finishes_during_poll) ... ok
+test_failure_survives_peer_cancellation (test_distributed_launch.TestDistributedLaunch.test_failure_survives_peer_cancellation) ... ok
+test_mpi_interrupt (test_distributed_launch.TestDistributedLaunch.test_mpi_interrupt) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 5.533s
+
+OK

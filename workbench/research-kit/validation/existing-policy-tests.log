@@ -1,0 +1,13 @@
+test_admitted_shapes (test_policy.TestPolicy.test_admitted_shapes) ... ok
+test_invalid_geometry (test_policy.TestPolicy.test_invalid_geometry) ... ok
+test_kernel_is_self_contained (test_policy.TestPolicy.test_kernel_is_self_contained) ... ok
+test_rejected_device_policy (test_policy.TestPolicy.test_rejected_device_policy) ... ok
+test_row_map_is_outside_inner_loops (test_policy.TestPolicy.test_row_map_is_outside_inner_loops) ... ok
+test_row_tile_boundary (test_policy.TestPolicy.test_row_tile_boundary) ... ok
+test_saved_allocation (test_policy.TestPolicy.test_saved_allocation) ... ok
+test_supported_device_policy (test_policy.TestPolicy.test_supported_device_policy) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.002s
+
+OK

@@ -1,0 +1,20 @@
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... ok
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... ok
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... ok
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... ok
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... ok
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... ok
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... ok
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... ok
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... ok
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... ok
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... ok
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... ok
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... ok
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... ok
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 25.374s
+
+OK

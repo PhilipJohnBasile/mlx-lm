@@ -1,0 +1,9 @@
+test_aa_identity (test_benchmark_math.TestBenchmarkMath.test_aa_identity) ... ok
+test_case_validation (test_benchmark_math.TestBenchmarkMath.test_case_validation) ... ok
+test_deterministic_pair_resampling (test_benchmark_math.TestBenchmarkMath.test_deterministic_pair_resampling) ... ok
+test_ratio_direction (test_benchmark_math.TestBenchmarkMath.test_ratio_direction) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.063s
+
+OK

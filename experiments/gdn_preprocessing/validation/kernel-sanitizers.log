@@ -1,0 +1,1 @@
+PASS: 110 float32 host cases, 1990656 output elements checked; ASan/UBSan. Not Metal execution.

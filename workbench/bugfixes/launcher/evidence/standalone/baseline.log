@@ -1,0 +1,403 @@
+test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds) ... FAIL
+test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll) ... FAIL
+test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination) ... FAIL
+test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) ... 
+  test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) (code=1) ... FAIL
+  test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) (code=7) ... FAIL
+  test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) (code=255) ... FAIL
+test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) ... 
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='ring', code=0) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='ring', code=23) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='nccl', code=0) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='nccl', code=23) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl', code=0) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl', code=23) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl-ring', code=0) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl-ring', code=23) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='mpi', code=0) ... FAIL
+  test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='mpi', code=23) ... FAIL
+test_missing_command (test_launch_exit_status.TestLaunchExitStatus.test_missing_command) ... FAIL
+test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) ... 
+  test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=0) ... FAIL
+  test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=7) ... FAIL
+  test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=255) ... FAIL
+  test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=-15) ... FAIL
+test_mpi_interrupt (test_launch_exit_status.TestLaunchExitStatus.test_mpi_interrupt) ... FAIL
+test_output_is_forwarded_on_failure (test_launch_exit_status.TestLaunchExitStatus.test_output_is_forwarded_on_failure) ... FAIL
+test_print_python (test_launch_exit_status.TestLaunchExitStatus.test_print_python) ... ok
+test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) ... 
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='ring', code=0) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='ring', code=23) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='nccl', code=0) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='nccl', code=23) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl', code=0) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl', code=23) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl-ring', code=0) ... FAIL
+  test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl-ring', code=23) ... FAIL
+test_signal_exit (test_launch_exit_status.TestLaunchExitStatus.test_signal_exit) ... FAIL
+test_success (test_launch_exit_status.TestLaunchExitStatus.test_success) ... ok
+test_successful_rank_does_not_stop_other_ranks (test_launch_exit_status.TestLaunchExitStatus.test_successful_rank_does_not_stop_other_ranks) ... ok
+test_unknown_backend (test_launch_exit_status.TestLaunchExitStatus.test_unknown_backend) ... ok
+test_worker_startup_failure (test_launch_exit_status.TestLaunchExitStatus.test_worker_startup_failure) ... FAIL
+
+======================================================================
+FAIL: test_failure_after_other_rank_succeeds (test_launch_exit_status.TestLaunchExitStatus.test_failure_after_other_rank_succeeds)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 125, in test_failure_after_other_rank_succeeds
+    self.assertEqual(result, 11, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 11 : [33m[WARN] Node with rank 1 exited with code 11 [0m
+
+
+======================================================================
+FAIL: test_failure_before_first_supervisor_poll (test_launch_exit_status.TestLaunchExitStatus.test_failure_before_first_supervisor_poll)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 177, in test_failure_before_first_supervisor_poll
+    self.assertEqual(result, 17, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 17 : [33m[WARN] Node with rank 0 exited with code 17 [0m
+[33m[WARN] Node with rank 1 exited with code 17 [0m
+
+
+======================================================================
+FAIL: test_failure_code_is_not_replaced_by_peer_termination (test_launch_exit_status.TestLaunchExitStatus.test_failure_code_is_not_replaced_by_peer_termination)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 113, in test_failure_code_is_not_replaced_by_peer_termination
+    self.assertEqual(result, 23, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 23 : [33m[WARN] Node with rank 2 exited with code 23 [0m
+[33m[WARN] Node with rank 1 exited with code 143 [0m
+[33m[WARN] Node with rank 0 exited with code 143 [0m
+
+
+======================================================================
+FAIL: test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) (code=1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 64, in test_failure_codes
+    self.assertEqual(result, code, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : [33m[WARN] Node with rank 0 exited with code 1 [0m
+
+
+======================================================================
+FAIL: test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) (code=7)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 64, in test_failure_codes
+    self.assertEqual(result, code, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 7 : [33m[WARN] Node with rank 0 exited with code 7 [0m
+
+
+======================================================================
+FAIL: test_failure_codes (test_launch_exit_status.TestLaunchExitStatus.test_failure_codes) (code=255)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 64, in test_failure_codes
+    self.assertEqual(result, code, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 255 : [33m[WARN] Node with rank 0 exited with code 255 [0m
+
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='ring', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='ring', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='nccl', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='nccl', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl-ring', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='jaccl-ring', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='mpi', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_main_returns_backend_status (test_launch_exit_status.TestLaunchExitStatus.test_main_returns_backend_status) (backend='mpi', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 230, in test_main_returns_backend_status
+    self.assertEqual(launch.main(), code)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_missing_command (test_launch_exit_status.TestLaunchExitStatus.test_missing_command)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 131, in test_missing_command
+    self.assertEqual(result, 127, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 127 : /bin/bash: line 1: /tmp/tmpktush1l8/does-not-exist: No such file or directory
+[33m[WARN] Node with rank 0 exited with code 127 [0m
+
+
+======================================================================
+FAIL: test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 245, in test_mpi_exit_status
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        launch.launch_mpi(None, hosts, args, ["script.py"]), expected
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=7)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 245, in test_mpi_exit_status
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        launch.launch_mpi(None, hosts, args, ["script.py"]), expected
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 7
+
+======================================================================
+FAIL: test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=255)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 245, in test_mpi_exit_status
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        launch.launch_mpi(None, hosts, args, ["script.py"]), expected
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 255
+
+======================================================================
+FAIL: test_mpi_exit_status (test_launch_exit_status.TestLaunchExitStatus.test_mpi_exit_status) (code=-15)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 245, in test_mpi_exit_status
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        launch.launch_mpi(None, hosts, args, ["script.py"]), expected
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 143
+
+======================================================================
+FAIL: test_mpi_interrupt (test_launch_exit_status.TestLaunchExitStatus.test_mpi_interrupt)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 262, in test_mpi_interrupt
+    self.assertEqual(launch.launch_mpi(None, hosts, args, ["script.py"]), 130)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 130
+
+======================================================================
+FAIL: test_output_is_forwarded_on_failure (test_launch_exit_status.TestLaunchExitStatus.test_output_is_forwarded_on_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 190, in test_output_is_forwarded_on_failure
+    self.assertEqual(result, 9)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^
+AssertionError: 0 != 9
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='ring', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='ring', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='nccl', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='nccl', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl-ring', code=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 0
+
+======================================================================
+FAIL: test_remote_backend_adapters (test_launch_exit_status.TestLaunchExitStatus.test_remote_backend_adapters) (backend='jaccl-ring', code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 213, in test_remote_backend_adapters
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        adapter(None, hosts, args, ["script.py"]), code
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: None != 23
+
+======================================================================
+FAIL: test_signal_exit (test_launch_exit_status.TestLaunchExitStatus.test_signal_exit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 70, in test_signal_exit
+    self.assertEqual(result, 128 + signal.SIGTERM, stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 143 : [33m[WARN] Node with rank 0 exited with code -15 [0m
+
+
+======================================================================
+FAIL: test_worker_startup_failure (test_launch_exit_status.TestLaunchExitStatus.test_worker_startup_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mlx-launch-test-lj075ngc/python/tests/test_launch_exit_status.py", line 143, in test_worker_startup_failure
+    self.assertEqual(result, 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^
+AssertionError: 0 != 1
+
+----------------------------------------------------------------------
+Ran 16 tests in 15.505s
+
+FAILED (failures=33)
