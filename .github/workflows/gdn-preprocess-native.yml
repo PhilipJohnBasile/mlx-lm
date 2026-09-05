@@ -1,0 +1,37 @@
+name: GDN preprocessing native component tests
+on:
+  push:
+    branches: [experimental/gdn-preprocessing]
+    paths: [experiments/gdn_preprocessing/**, .github/workflows/gdn-preprocess-native.yml]
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare isolated test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          { sw_vers; uname -m; xcodebuild -version; } > evidence/environment.txt
+          python3 -m venv /tmp/gdn-native-tests
+          /tmp/gdn-native-tests/bin/python -m pip install --upgrade pip
+          /tmp/gdn-native-tests/bin/python -m pip install -e . numpy
+          /tmp/gdn-native-tests/bin/python -m pip freeze > evidence/packages.txt
+      - name: Native preprocessing and next-state correctness
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/gdn-native-tests/bin/python experiments/gdn_preprocessing/tests/test_native.py 2>&1 | tee evidence/native.log
+          printf 'Native component tests passed on the recorded hosted device. This is not physical M5 qualification or a performance measurement.\n' > evidence/STATUS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gdn-preprocessing-native
+          path: evidence/
+          retention-days: 7
