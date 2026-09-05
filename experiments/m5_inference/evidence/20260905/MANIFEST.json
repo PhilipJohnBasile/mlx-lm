@@ -1,0 +1,139 @@
+{
+  "base_commit": "5db58608fa5d21d2613985cefe94a243420ccd63",
+  "files": {
+    "gdn-original-20260905-bf16-b1/status.json": {
+      "gzip_file": "gdn-original-20260905-bf16-b1__status.json.gz",
+      "bytes": 561,
+      "sha256": "72fe469e415e0e29da4bdc24003098244d850313944b46303342b8c82e559c95"
+    },
+    "gdn-original-20260905-bf16-b1/timings.json": {
+      "gzip_file": "gdn-original-20260905-bf16-b1__timings.json.gz",
+      "bytes": 61091,
+      "sha256": "097308655321cb161be148c610c0acdf2857d56371cd8634918807e02e876f1c"
+    },
+    "gdn-original-20260905-bf16-b1/native-tests.log": {
+      "gzip_file": "gdn-original-20260905-bf16-b1__native-tests.log.gz",
+      "bytes": 928,
+      "sha256": "7fc9d3a59d47cb14301917dc313a49cf81472a10389e286678ad16519b002188"
+    },
+    "gdn-original-20260905-bf16-b1/compile.log": {
+      "gzip_file": "gdn-original-20260905-bf16-b1__compile.log.gz",
+      "bytes": 6330,
+      "sha256": "b403c3f2ee78b9aa91fb91e30e40c56736e9332f5ad50d644aa28aa329161015"
+    },
+    "gdn-integration-tests-01.log": {
+      "gzip_file": "gdn-integration-tests-01.log.gz",
+      "bytes": 634,
+      "sha256": "35e253fabb6ea25883a323eea2b2f162bfcc3c41048784151c27387a852ad48f"
+    },
+    "inventory-tests-final.log": {
+      "gzip_file": "inventory-tests-final.log.gz",
+      "bytes": 570,
+      "sha256": "f5b08160460c728e4aa77c2bffbbb57c501913f2d8b516aac6ec775ef5f98149"
+    },
+    "dense4-pilot-01.json": {
+      "gzip_file": "dense4-pilot-01.json.gz",
+      "bytes": 513496,
+      "sha256": "a61f6e4d5be252bc4cd3d3b9249335e11a20001cfc7bcffe0bbafdfb565f5d81"
+    },
+    "dense6-pilot-01.json": {
+      "gzip_file": "dense6-pilot-01.json.gz",
+      "bytes": 513573,
+      "sha256": "c769a819950dabe75b67ffc2e5b4c4a0c952258d3f18d5624fe8ea710662e71d"
+    },
+    "moe4-pilot-01.json": {
+      "gzip_file": "moe4-pilot-01.json.gz",
+      "bytes": 329394,
+      "sha256": "cc6e0aff0bf98a44dbdb4c2aa578a85f5c61d20d6bbd601df8b224931c834d51"
+    },
+    "dense4-requests-01/report.json": {
+      "gzip_file": "dense4-requests-01__report.json.gz",
+      "bytes": 3295223,
+      "sha256": "8cd7ae312ea93f9140b91fee2e78375735726a97a210a254e434e4e398192c7e"
+    },
+    "moe4-requests-01/report.json": {
+      "gzip_file": "moe4-requests-01__report.json.gz",
+      "bytes": 2874126,
+      "sha256": "a735a9c0f91cf2fa45037d2131d6010febf4fc2c600b96a687e1da339ea55fe3"
+    },
+    "model-inventory-02.json": {
+      "gzip_file": "model-inventory-02.json.gz",
+      "bytes": 29364,
+      "sha256": "a105c94f9204870386ea62219b9c5731ad1aad7a41f58f135618ee9cb8979353"
+    },
+    "environment.lock": {
+      "gzip_file": "environment.lock.gz",
+      "bytes": 589,
+      "sha256": "07e64a85439c75766e79b376c2afd48da7cb623d29a410a51fdf30be187e8d33"
+    },
+    "dense4-requests-01/source/pilot.py": {
+      "gzip_file": "dense4-requests-01__source__pilot.py.gz",
+      "bytes": 6477,
+      "sha256": "ecc332a2487d72a0785c098cc310acff323d9d934839e4d93a59e049a0816341"
+    },
+    "dense4-requests-01/source/benchmark_requests.py": {
+      "gzip_file": "dense4-requests-01__source__benchmark_requests.py.gz",
+      "bytes": 13496,
+      "sha256": "27b76092a3d2d76ec3ac628e1f6768997ee76b9b640deef694d939bdcaf5924c"
+    },
+    "dense4-requests-01/source/gdn.py": {
+      "gzip_file": "dense4-requests-01__source__gdn.py.gz",
+      "bytes": 1839,
+      "sha256": "5d5454191f3b3044f1c5be549f87a674f79bbe7823a5e6cd6f712bfeaecdbf65"
+    },
+    "moe4-requests-01/source/pilot.py": {
+      "gzip_file": "moe4-requests-01__source__pilot.py.gz",
+      "bytes": 7139,
+      "sha256": "d3d6bbf0a1b2faab9b524adf3fd9ddb98aec2906c66127f0bbea2c19b11c3359"
+    },
+    "moe4-requests-01/source/benchmark_requests.py": {
+      "gzip_file": "moe4-requests-01__source__benchmark_requests.py.gz",
+      "bytes": 16475,
+      "sha256": "00c18d4d856b32051c778d1ba5da079bc0427fe94d7f0504fb275cb3f8f6902f"
+    },
+    "moe4-requests-01/source/gdn.py": {
+      "gzip_file": "moe4-requests-01__source__gdn.py.gz",
+      "bytes": 1841,
+      "sha256": "ec4cf2822f605d87b4e3d7708d8bc9c2601b3df07fcee72a3b6c7a02b530f7f7"
+    },
+    "moe4-requests-01/source/test_inventory.py": {
+      "gzip_file": "moe4-requests-01__source__test_inventory.py.gz",
+      "bytes": 2463,
+      "sha256": "48cfd2d1aacb145e846c6efdfd85ffa13255a8431f7cc8455f461b7db9c08b92"
+    },
+    "moe4-requests-01/source/test_gdn.py": {
+      "gzip_file": "moe4-requests-01__source__test_gdn.py.gz",
+      "bytes": 4394,
+      "sha256": "18287ffea5e93fe7726ba87d1aa3e3061e12e1571cd6acffa95e370adf2e3a60"
+    },
+    "moe4-requests-01/source/inventory.py": {
+      "gzip_file": "moe4-requests-01__source__inventory.py.gz",
+      "bytes": 5963,
+      "sha256": "6b3eee865cb0a28d1e077c018d4bb8d23c037e29869bff663ea0df8fbae71a3c"
+    },
+    "moe4-short-repeat-02/report.json": {
+      "gzip_file": "moe4-short-repeat-02__report.json.gz",
+      "bytes": 3037932,
+      "sha256": "8c038af7ad8c3119c855686c0f3a04b112fc3d03c8ef38ec3637b49e215005fa"
+    },
+    "dense4-long-c4-repeat-02/report.json": {
+      "gzip_file": "dense4-long-c4-repeat-02__report.json.gz",
+      "bytes": 1328255,
+      "sha256": "6ddd74e2179b664c07e3bfc228e9cfd40a7512749605a259dcd5ab0c1e522433"
+    }
+  },
+  "reproducible_build_outputs": {
+    "gdn_prepare.metal": {
+      "bytes": 250321,
+      "sha256": "d9ebdb5dd7cd2737694186da028950e515ad1b5cb1d470356343833e98101a87"
+    },
+    "gdn_prepare.air": {
+      "bytes": 740880,
+      "sha256": "d587b09e8ad1017b137cc25fde5346812feb1a383dc92a0f244c4f9c8359836f"
+    },
+    "gdn_prepare.metallib": {
+      "bytes": 3332864,
+      "sha256": "1f18819c0af38f44cdc39021e6b05886cb15f39825f2336836a17e3bc582b5c9"
+    }
+  }
+}
