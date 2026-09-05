@@ -1,0 +1,142 @@
+name: Complete workbench log handoff
+on:
+  push:
+    branches: [handoff/m5-workbench-import-20260905]
+    paths: [.github/workflows/m5-workbench-log-handoff.yml]
+permissions:
+  contents: write
+jobs:
+  restore:
+    if: github.repository == 'PhilipJohnBasile/mlx-lm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 0b974d6cc2f935640bb0222f00af415976bee531
+          fetch-depth: 1
+      - name: Restore exact archived logs and verify committed inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import gzip
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import subprocess
+          import urllib.request
+
+          REPO = 'PhilipJohnBasile/mlx-lm'
+          BRANCH = 'research/m5-optimization-workbench'
+          EXPECTED = '0b974d6cc2f935640bb0222f00af415976bee531'
+          PARTS = [
+              '38e55d700276923263f65ad127b0bd767f0fb0e3',
+              '999b651c638634bb03af9f7c2dbcf286d3ea4666',
+              'b2d12926880e614c232c16570844ee4a24ef2a17',
+          ]
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          def require(ok, message):
+              if not ok:
+                  raise RuntimeError(message)
+
+          require(git('rev-parse', 'HEAD').decode().strip() == EXPECTED,
+                  'Unexpected checkout; no publication performed')
+          manifest = json.loads(Path('workbench/MANIFEST.json').read_text())
+          records = manifest['files']
+          index = {item['path']: item for item in records}
+          require(len(records) == 196 and len(index) == 196,
+                  'Unexpected or duplicate manifest entries')
+          for path in index:
+              parts = PurePosixPath(path).parts
+              require(not PurePosixPath(path).is_absolute() and '..' not in parts,
+                      'Unsafe manifest path')
+              require(path.startswith(('workbench/', 'experiments/gdn_preprocessing/')),
+                      'Manifest path is outside the handoff')
+
+          chunks = []
+          for sha in PARTS:
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{REPO}/git/blobs/{sha}',
+                  headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  blob = json.load(response)
+              require(blob.get('encoding') == 'base64', 'Unexpected blob encoding')
+              raw = base64.b64decode(''.join(blob['content'].split()), validate=True)
+              actual = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+              require(actual == sha, 'Staged blob hash mismatch')
+              chunks.append(raw)
+          compressed = b''.join(chunks)
+          require(hashlib.sha256(compressed).hexdigest() ==
+                  '87cae0ab858e6433bea9bc3eb1cd11057473d82bd0b483754aa62ccf775b8582',
+                  'Archive checksum mismatch')
+          payload = json.loads(gzip.decompress(compressed))
+          require(len(payload) == 45, 'Unexpected log count')
+          for path, text in payload.items():
+              require(path in index and path.endswith('.log'),
+                      'Payload is not limited to manifest-listed logs')
+              raw = text.encode('utf-8')
+              item = index[path]
+              require(len(raw) == item['bytes'] and
+                      hashlib.sha256(raw).hexdigest() == item['sha256'],
+                      'Archived log differs from handoff: ' + path)
+              target = Path(path)
+              if target.exists():
+                  require(target.read_bytes() == raw, 'Refusing to overwrite changed log')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(raw)
+
+          subprocess.run(['git', 'add', '-f', '--', *sorted(payload)], check=True)
+          staged = {p.decode() for p in git('diff', '--cached', '--name-only', '-z').split(b'\0') if p}
+          require(staged == set(payload), 'Unexpected staged changes')
+          for item in records:
+              raw = Path(item['path']).read_bytes()
+              require(len(raw) == item['bytes'] and
+                      hashlib.sha256(raw).hexdigest() == item['sha256'],
+                      'Working inventory mismatch: ' + item['path'])
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email',
+                          '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'commit', '-m',
+                          'Preserve validation logs required by the complete handoff inventory'], check=True)
+          head = git('rev-parse', 'HEAD').decode().strip()
+          for item in records:
+              raw = git('show', f"{head}:{item['path']}")
+              require(len(raw) == item['bytes'] and
+                      hashlib.sha256(raw).hexdigest() == item['sha256'],
+                      'Committed inventory mismatch: ' + item['path'])
+          subprocess.run(['git', 'fetch', '--no-tags', 'origin', BRANCH], check=True)
+          require(git('rev-parse', 'FETCH_HEAD').decode().strip() == EXPECTED,
+                  'Development branch moved; refusing to publish stale work')
+          subprocess.run(['git', 'push', 'origin', f'HEAD:refs/heads/{BRANCH}'], check=True)
+          remote = git('ls-remote', 'origin', f'refs/heads/{BRANCH}').decode().split()[0]
+          require(remote == head, 'Remote publication verification failed')
+          evidence = Path(os.environ['RUNNER_TEMP']) / 'workbench-log-evidence'
+          evidence.mkdir(parents=True, exist_ok=True)
+          result = {'repository': REPO, 'branch': BRANCH, 'parent': EXPECTED,
+                    'head': head, 'restored_logs': len(payload),
+                    'manifest_files_verified_from_git_objects': len(records),
+                    'remote_head_verified': True, 'gpu_tests_run': False,
+                    'scope': 'Archive integrity only; no inference source changed'}
+          (evidence / 'inventory.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'Committed {len(payload)} archived logs at `{head}`.\n\n'
+                            f'All {len(records)} handoff files verified from committed Git objects. '
+                            'No GPU or performance test was run.\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: workbench-log-publication-evidence
+          path: ${{ runner.temp }}/workbench-log-evidence/
+          retention-days: 7
