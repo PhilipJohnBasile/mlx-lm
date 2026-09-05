@@ -110,6 +110,11 @@
       "gzip_file": "moe4-requests-01__source__inventory.py.gz",
       "bytes": 5963,
       "sha256": "6b3eee865cb0a28d1e077c018d4bb8d23c037e29869bff663ea0df8fbae71a3c"
+    },
+    "moe4-short-repeat-02/report.json": {
+      "gzip_file": "moe4-short-repeat-02__report.json.gz",
+      "bytes": 3037932,
+      "sha256": "8c038af7ad8c3119c855686c0f3a04b112fc3d03c8ef38ec3637b49e215005fa"
     }
   },
   "reproducible_build_outputs": {

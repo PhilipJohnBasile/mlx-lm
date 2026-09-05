@@ -26,3 +26,14 @@ Archived handoff files remain unchanged. Compressed raw receipts and executed ac
 The MoE model shards and tokenizer match remote revision `bdadcddf7e8abf7234e7710c58c45c1b45765a47`. The dense4 local files are fingerprinted, but the recorded publication revision `e37c5433c552be35c1db4563e3add4726db9d55b` could not be verified: the repository returns 401 without authentication and 404 with the existing login. Do not promote that metadata claim into a verified remote revision.
 
 Flash, speculative recovery, paired projections, single-sort and indirect-NAX execution are not qualified by this increment. Full project objective remains open.
+
+## MoE short-prompt repeat
+
+Fifteen rounds per cell, unchanged gates, fresh output. Both repetitions pass A/A, drift, no-swap and pre/post bitwise correctness. The original invalid observations above remain retained.
+
+| Concurrency | Reference / candidate ms | Paired speed ratio (95% CI) |
+|---:|---|---|
+| 1 | 630.1 / 627.2 | 1.0007 (0.9917-1.0069) |
+| 4 | 1229.1 / 1212.4 | 1.0157 (1.0093-1.0225) |
+
+Concurrency one is neutral; concurrency four improves about 1.57%. Neither reaches the 5% target. The dense long/concurrency-four memory-invalid cell still requires a separate repeat.
