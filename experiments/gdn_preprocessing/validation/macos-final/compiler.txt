@@ -1,0 +1,4 @@
+Apple metal version 32023.620 (metalfe-32023.620)
+Target: air64-apple-darwin24.6.0
+Thread model: posix
+InstalledDir: /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/metal/current/bin

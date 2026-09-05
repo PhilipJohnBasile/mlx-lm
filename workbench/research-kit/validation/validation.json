@@ -1,0 +1,19 @@
+{
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "new_portable_tests_passed": 32,
+  "existing_policy_tests_passed": 8,
+  "gpu_kernel_source_unchanged": {
+    "mlx_nax_indirect/kernels/gather_body.metal": true,
+    "mlx_nax_indirect/kernels/indirect_load.h": true,
+    "mlx_nax_indirect/kernels/offline_utils.h": true,
+    "mlx_nax_indirect/kernels/route_address.h": true,
+    "mlx_nax_indirect/kernels/upstream_nax.h": true
+  },
+  "native_metal_compilation": "not_run",
+  "native_m5_performance": "not_measured",
+  "note": "Initial existing-policy test invocation lacked repository on import path; rerun from prototype root passed all 8. No production GPU kernel was changed.",
+  "patch_application": "passed; Python files match delivered copy byte-for-byte",
+  "git_diff_check": "passed",
+  "address_checks": 11010821
+}

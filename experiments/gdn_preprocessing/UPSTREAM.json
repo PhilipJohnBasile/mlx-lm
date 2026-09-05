@@ -1,0 +1,17 @@
+{
+  "mlx_lm_commit": "32bb4e68791c941db382d6fc8fa5b35ba9f3d98b",
+  "gdn_reference_path": "mlx_lm/models/qwen3_5.py",
+  "gdn_reference_blob": "3add3b3d87b5642cc29fa8be5c3ffa0ab39de89c",
+  "mlx_commit": "b6368984b8e02a3fb3ee7986846c0fb85e1fccf7",
+  "headers": {
+    "bf16_math.h": "1f374f8380f756eb89acf6a847741cb8fecbe642945e159fb6208d804cc06496",
+    "bf16.h": "abd87446a310b77ac530ef52a324feae5cb285d03ec9613e3a88ebb71410fdcb"
+  },
+  "host_environment": {
+    "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "clang": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /usr/local/swift/usr/bin\n"
+  },
+  "novelty": "Not established; direct-window convolution and kernel fusion are established techniques.",
+  "production_default": "unchanged; experimental custom modes require explicit selection"
+}

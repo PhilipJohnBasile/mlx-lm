@@ -1,0 +1,299 @@
+{
+  "schema": 1,
+  "status": "planning_only_not_a_benchmark_or_admission_guard",
+  "config_content_sha256": "7f17976a33eab500696d14db43abab1dd3dfc4aa292ef59f5fc62527d88e4c32",
+  "model_type": "qwen3_5_moe_text",
+  "kind": "moe",
+  "geometry": {
+    "hidden": 2048,
+    "intermediate": 512,
+    "layers": 40,
+    "linear_layers": 30,
+    "full_attention_layers": 10,
+    "experts": 256,
+    "top_k": 8,
+    "shared_expert_intermediate": 512
+  },
+  "assumptions": {
+    "kv_element_bytes": 2,
+    "activation_element_bytes": 2,
+    "gdn_state_element_bytes": 4,
+    "kv_quantization": "not modeled",
+    "budget_bytes": 90000000000,
+    "resident_weight_bytes": null,
+    "workspace_reserve_bytes": null
+  },
+  "one_request": {
+    "gdn_state_bytes": 62914560,
+    "convolution_state_bytes": 1474560,
+    "kv_bytes_per_token": 20480,
+    "k_v_g_beta_journal_bytes_per_position": 376320
+  },
+  "verification_rows": [
+    1,
+    2,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    12,
+    16,
+    17,
+    24,
+    32
+  ],
+  "projection_shapes": [
+    {
+      "name": "ffn_gate_and_up",
+      "K": 2048,
+      "N": 512,
+      "matrices": 2
+    },
+    {
+      "name": "ffn_down",
+      "K": 512,
+      "N": 2048,
+      "matrices": 1
+    },
+    {
+      "name": "gdn_qkv",
+      "K": 2048,
+      "N": 8192,
+      "matrices": 1
+    },
+    {
+      "name": "gdn_z",
+      "K": 2048,
+      "N": 4096,
+      "matrices": 1
+    },
+    {
+      "name": "gdn_a_and_b",
+      "K": 2048,
+      "N": 32,
+      "matrices": 2
+    },
+    {
+      "name": "gdn_out",
+      "K": 4096,
+      "N": 2048,
+      "matrices": 1
+    },
+    {
+      "name": "lm_head",
+      "K": 2048,
+      "N": 248320,
+      "matrices": 1
+    },
+    {
+      "name": "router",
+      "K": 2048,
+      "N": 256,
+      "matrices": 1
+    },
+    {
+      "name": "shared_expert_gate_and_up",
+      "K": 2048,
+      "N": 512,
+      "matrices": 2
+    },
+    {
+      "name": "shared_expert_down",
+      "K": 512,
+      "N": 2048,
+      "matrices": 1
+    }
+  ],
+  "required_precision_coverage": [
+    "affine4",
+    "affine6",
+    "affine8",
+    "nvfp4_where_present"
+  ],
+  "current_indirect_pilot_coverage": [
+    "affine4",
+    "affine8"
+  ],
+  "state_strategy_accounting": [
+    {
+      "verified_positions": 1,
+      "extra_full_state_snapshots_bytes": 62914560,
+      "k_v_g_beta_journal_bytes": 376320,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 2,
+      "extra_full_state_snapshots_bytes": 125829120,
+      "k_v_g_beta_journal_bytes": 752640,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 4,
+      "extra_full_state_snapshots_bytes": 251658240,
+      "k_v_g_beta_journal_bytes": 1505280,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 5,
+      "extra_full_state_snapshots_bytes": 314572800,
+      "k_v_g_beta_journal_bytes": 1881600,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 6,
+      "extra_full_state_snapshots_bytes": 377487360,
+      "k_v_g_beta_journal_bytes": 2257920,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 7,
+      "extra_full_state_snapshots_bytes": 440401920,
+      "k_v_g_beta_journal_bytes": 2634240,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 8,
+      "extra_full_state_snapshots_bytes": 503316480,
+      "k_v_g_beta_journal_bytes": 3010560,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 9,
+      "extra_full_state_snapshots_bytes": 566231040,
+      "k_v_g_beta_journal_bytes": 3386880,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 12,
+      "extra_full_state_snapshots_bytes": 754974720,
+      "k_v_g_beta_journal_bytes": 4515840,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 16,
+      "extra_full_state_snapshots_bytes": 1006632960,
+      "k_v_g_beta_journal_bytes": 6021120,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 17,
+      "extra_full_state_snapshots_bytes": 1069547520,
+      "k_v_g_beta_journal_bytes": 6397440,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 24,
+      "extra_full_state_snapshots_bytes": 1509949440,
+      "k_v_g_beta_journal_bytes": 9031680,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    },
+    {
+      "verified_positions": 32,
+      "extra_full_state_snapshots_bytes": 2013265920,
+      "k_v_g_beta_journal_bytes": 12042240,
+      "note": "Alternative strategies, not a statement of current runtime allocation"
+    }
+  ],
+  "workload_cells": [
+    {
+      "concurrency": 1,
+      "context_tokens": 8192,
+      "bf16_or_selected_width_kv_bytes": 167772160,
+      "committed_gdn_state_bytes": 62914560,
+      "convolution_state_bytes": 1474560,
+      "known_cache_bytes": 232161280,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 1,
+      "context_tokens": 32768,
+      "bf16_or_selected_width_kv_bytes": 671088640,
+      "committed_gdn_state_bytes": 62914560,
+      "convolution_state_bytes": 1474560,
+      "known_cache_bytes": 735477760,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 1,
+      "context_tokens": 65536,
+      "bf16_or_selected_width_kv_bytes": 1342177280,
+      "committed_gdn_state_bytes": 62914560,
+      "convolution_state_bytes": 1474560,
+      "known_cache_bytes": 1406566400,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 1,
+      "context_tokens": 131072,
+      "bf16_or_selected_width_kv_bytes": 2684354560,
+      "committed_gdn_state_bytes": 62914560,
+      "convolution_state_bytes": 1474560,
+      "known_cache_bytes": 2748743680,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 4,
+      "context_tokens": 8192,
+      "bf16_or_selected_width_kv_bytes": 671088640,
+      "committed_gdn_state_bytes": 251658240,
+      "convolution_state_bytes": 5898240,
+      "known_cache_bytes": 928645120,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 4,
+      "context_tokens": 32768,
+      "bf16_or_selected_width_kv_bytes": 2684354560,
+      "committed_gdn_state_bytes": 251658240,
+      "convolution_state_bytes": 5898240,
+      "known_cache_bytes": 2941911040,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 4,
+      "context_tokens": 65536,
+      "bf16_or_selected_width_kv_bytes": 5368709120,
+      "committed_gdn_state_bytes": 251658240,
+      "convolution_state_bytes": 5898240,
+      "known_cache_bytes": 5626265600,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    },
+    {
+      "concurrency": 4,
+      "context_tokens": 131072,
+      "bf16_or_selected_width_kv_bytes": 10737418240,
+      "committed_gdn_state_bytes": 251658240,
+      "convolution_state_bytes": 5898240,
+      "known_cache_bytes": 10994974720,
+      "caller_budget_total_bytes": null,
+      "fits_caller_estimate_only": null,
+      "safe_to_run": null
+    }
+  ],
+  "required_profiles": [
+    "single_request",
+    "serving_c4",
+    "prefix_hit",
+    "prefix_miss",
+    "cancellation",
+    "ragged_batch",
+    "forced_rejection_positions"
+  ],
+  "limits": "No observed physical footprint, GPU capability, timing or correctness result; journal accounting omits conv-history and live Q/output/workspace; draft weights must be included in caller budget; do not change quantization to pass a gate"
+}

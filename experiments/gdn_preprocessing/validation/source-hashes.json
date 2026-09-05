@@ -1,0 +1,58 @@
+{
+  "mlx_gdn_prep/geometry.py": {
+    "sha256": "d1dfb962381abd70b06d5f493cf86c1f7d2c91b7951aebe1d7ea3ef7aba35154",
+    "git_blob": "5ea2d93325f2b894674ac7f3350425f1400077f6"
+  },
+  "mlx_gdn_prep/kernels.py": {
+    "sha256": "772f02c6e416e75c61f42c6341376cbabb9bc7cf008b9f339bae3c87b3e704c2",
+    "git_blob": "1b961443aca375486408fd16f781ab0e4c19e777"
+  },
+  "mlx_gdn_prep/timing.py": {
+    "sha256": "7dfb0403aa1cca421724ee8c63db94784bb7c097d7fe54381ee8343752182038",
+    "git_blob": "4a9c294ae6b78b2ac1b070c8a285ae499dcc3623"
+  },
+  "mlx_gdn_prep/__init__.py": {
+    "sha256": "458cc65d2d692b3de99dcf7e690f4afab43c8ac2216e3731bd3a324b31c393df",
+    "git_blob": "ca8a5399f7c7224eabb2f50c1c4b95222b255ed9"
+  },
+  "mlx_gdn_prep/integration.py": {
+    "sha256": "f14e4a1ff1080de12f1c73f4a1361098e7e17457b289de4a04b6b7959ef8daa2",
+    "git_blob": "90c8a1277ffb7e5c08353e2c51d555cb47babfee"
+  },
+  "mlx_gdn_prep/oracle.py": {
+    "sha256": "f83b95b8cd32bdabbe195d334c0295c1416c9a29a62daec3af0b79acba330dc2",
+    "git_blob": "bf372b9f3b9673de50bc5e4ac3e51066a408b5fd"
+  },
+  "tests/test_native.py": {
+    "sha256": "b692201a46b2159880f69203955a48756d9e58279ec79e60603031b62b2fdf4d",
+    "git_blob": "7599158ea07e293537f6bae9dcb4d5c112546a6c"
+  },
+  "tests/test_timing.py": {
+    "sha256": "a0fd11c9c58714bfcbc171a7636adbce51f05f99ff9641cc3ffbe6ce81146b6f",
+    "git_blob": "c096c8dbd868beb4444c81f0c83efa6ef71022c5"
+  },
+  "tests/test_host.py": {
+    "sha256": "d49ad89d7beb3953be7a447dceffc1d13bae75d6c2cf2754cfd6556a7f6cbe91",
+    "git_blob": "b90f9552819daf8de9439d489f0b08cce61d6cd2"
+  },
+  "tests/test_headers.py": {
+    "sha256": "1ad16036d5b543b869994609ebe333572b71ab497f92e1638ee6b1df1e48eabe",
+    "git_blob": "b4f868dcaf13e61f257ec209289a3f4db4d22e86"
+  },
+  "tools/test_kernel_host.py": {
+    "sha256": "8d367bc955670f2736f6039c7ed277838aee0bb2f3da4959db029f54b9513283",
+    "git_blob": "b29b86af8fbe4857440f517ea9fb796332acb7b0"
+  },
+  "tools/benchmark.py": {
+    "sha256": "d5eb244b83bfb2b01ed2ba7485cb22f42d83bdf26c773e260dfa39bbe8fbf6b9",
+    "git_blob": "5cca74f8d2e60d507cdb0dbc1977aff41dca96b4"
+  },
+  "tools/emit_metal.py": {
+    "sha256": "37c6b3b2fc0cd91c50849a6ad37d5ba4030f8f1d85748be15b780106f4cb3e0e",
+    "git_blob": "ea95c0e4fed7d5a3e241023a105d3153fc4c146f"
+  },
+  "tools/qualify_m5.py": {
+    "sha256": "3ae13de779c8adb05b6b971062b2cda7987435ac109d39c1516f7cf6cd513014",
+    "git_blob": "5696e6dd36ebbfd3c0c22e59e5207c7ee6310425"
+  }
+}

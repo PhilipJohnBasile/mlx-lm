@@ -1,0 +1,16 @@
+[
+  {
+    "variant": "baseline",
+    "worker_exit": 42,
+    "shell_exit": 0,
+    "success_command_ran": true,
+    "stderr": "\u001b[33m[WARN] Node with rank 0 exited with code 42 \u001b[0m"
+  },
+  {
+    "variant": "patched",
+    "worker_exit": 42,
+    "shell_exit": 42,
+    "success_command_ran": false,
+    "stderr": "\u001b[33m[WARN] Node with rank 0 exited with code 42 \u001b[0m"
+  }
+]

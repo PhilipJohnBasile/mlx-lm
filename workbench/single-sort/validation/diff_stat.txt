@@ -1,0 +1,5 @@
+ benchmarks/single_sort_moe.py     | 272 ++++++++++++++++++++++++++++++++++++++
+ mlx_lm/models/_single_sort_moe.py | 160 ++++++++++++++++++++++
+ mlx_lm/models/switch_layers.py    |   9 +-
+ tests/test_single_sort_moe.py     | 190 ++++++++++++++++++++++++++
+ 4 files changed, 628 insertions(+), 3 deletions(-)

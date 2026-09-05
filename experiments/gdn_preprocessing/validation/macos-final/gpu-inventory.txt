@@ -1,0 +1,2 @@
+Metal device count: 1
+Apple Paravirtual device

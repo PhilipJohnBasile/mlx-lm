@@ -1,0 +1,37 @@
+{
+  "repository": "ml-explore/mlx",
+  "base_commit": "b6368984b8e02a3fb3ee7986846c0fb85e1fccf7",
+  "verified_upstream_git_blobs": {
+    "python/mlx/_distributed_utils/launch.py": "0e661e358ffb13fd8b110145cc73c7e46554eac8",
+    "python/mlx/_distributed_utils/common.py": "6289da0c468d75ab3245e15f59f34f1d7793aab2"
+  },
+  "runtime": {
+    "os": "Linux",
+    "machine": "x86_64",
+    "python": "3.13.5",
+    "native_mlx_installed": false
+  },
+  "test_methods": 13,
+  "parameterized_scenarios": 46,
+  "baseline_regression_failures": 38,
+  "patched_failures": 0,
+  "patched_errors": 0,
+  "published": false,
+  "files_sha256": {
+    "LICENSE": "ccfab7ccb2ea306f71531c8ca77bb55507606cd90768b1e32b8b52ab5b48cf01",
+    "VALIDATION.md": "450512a83639b672a5dd48ce520cea2ca021dd26972a0c8834a6997278c93721",
+    "mlx-launch-exit-status.patch": "5f819173d6a1a0429d55e11007604c48fdff29da13369219c4d74919dbd06477",
+    "patched/python/mlx/_distributed_utils/launch.py": "5ea779bc58c72624a990cca1d892f3e6867c6f1bfde5a3bf06ece87e6b0ad0c1",
+    "patched/python/tests/test_distributed_launch.py": "5346804617d6eabe7363e07e7029dc149f027b3802b568ca67772dc6d5b0d5d1",
+    "upstream/python/mlx/_distributed_utils/common.py": "407793d67635491c16bd37ce2928a0ba8ff11c0478110878adae79a3fd406e29",
+    "upstream/python/mlx/_distributed_utils/launch.py": "6a85d23ed3e505cb1d410d18139ae61599f6805f6ee2b98a1030a28d8a5a7f66",
+    "validation/baseline-repro.json": "ea5de600cccd75201dc9e6cae7df339d2e3fb56f3ef1b35b7bb221f3b5203d33",
+    "validation/baseline-tests.log": "a155c2779e8f0e9813ce8b1a3423db90906b0e2329961582bcb37018e53de379",
+    "validation/native-import-shim/mlx/core.py": "10997ca070ec9a63cfe558a949225ebf2adc6251f5411ccc757801556eeb8535",
+    "validation/patched-tests.log": "233256016258b08f06c04888993e0f0e6c1329b1959ae5eef999a3a4e66237b4",
+    "validation/poll-race-after.log": "40f1726a6ae45a823f14090ff81c1e39d0dab65a73aaeef1c6b410379fc8febe",
+    "validation/poll-race-before.log": "7841c3f6d7e3feaa95ff3668a3a8402d87b74f121a08b2def954ba431f95b97d",
+    "validation/results.json": "51a542acb422e2c09eba510fcaeafec3c57e79856c511e5033580316a9f34cde",
+    "validation/shell-gate-repro.json": "99a4e93495e0d63c75c34f6fa62099c1821e6081d5e257505c71286c9b03947c"
+  }
+}
