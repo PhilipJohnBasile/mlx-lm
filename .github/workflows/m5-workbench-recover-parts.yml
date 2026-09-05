@@ -1,0 +1,59 @@
+name: Recover staged M5 workbench objects
+on:
+  push:
+    branches: [handoff/m5-workbench-import-20260905]
+    paths: [.github/workflows/m5-workbench-recover-parts.yml]
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the previously uploaded Git objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+          shas = '''507214deaa4870e7f91afd94c553c97ce8c93d03
+          c7190203057cbf11350ad69dc1be2532c63a6682
+          12bc014e4f0b44df4ebe4eab0cf7aef06f362c44
+          fbbec8f83185c691ebad7f42c7a916133792c0ba
+          093f2c00288741f8adab17e23df30132b4ac5767
+          14213e918b00dbee786e73dfb13a2e7bb3fefdbf
+          c44f5d1dd2f9f4798ead49ec3a2a3602e17e8e91
+          b067387776d9eaf97135c563ba73db3372cb2f1d
+          ff4a14e58150bec7a523e577f4567ef8defe610a
+          a23d3f1343c86c4c68539f924314422838573fbe
+          65ffe2ab1cac4a2b55187cecc827f17c008fc52d
+          0bb9de766ac5fd6a3436fa18106a6d899119e492
+          7d8f3a944d742e34cd7c66e05f4223c80add4e32
+          c2d8dd787c28ad624703a0a566e13fec095ab1d5
+          68f224e8519be18c1bdd573dab1ba08a46b61a6e
+          7b1ef5196422b164bc40fc505f0833b5aca309f7'''.split()
+          root = pathlib.Path('recovery'); root.mkdir()
+          records = []; offset = 0
+          for i, sha in enumerate(shas):
+              req = urllib.request.Request(
+                  'https://api.github.com/repos/PhilipJohnBasile/mlx-lm/git/blobs/' + sha,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json',
+                           'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  info = json.load(response)
+              data = base64.b64decode(info['content'])
+              actual = hashlib.sha1(('blob %d\0' % len(data)).encode() + data).hexdigest()
+              if actual != sha: raise RuntimeError('Git object hash mismatch')
+              (root / ('part-%02d.bin' % i)).write_bytes(data)
+              records.append({'part': i, 'offset': offset, 'bytes': len(data),
+                              'git_blob': sha, 'sha256': hashlib.sha256(data).hexdigest()})
+              offset += len(data)
+          (root / 'parts.json').write_text(json.dumps(records, indent=2) + '\n')
+          print(json.dumps({'objects': len(records), 'bytes': offset, 'parts': records}, indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: recovered-m5-workbench-parts
+          path: recovery/
+          retention-days: 7
